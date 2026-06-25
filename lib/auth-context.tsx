@@ -12,6 +12,10 @@ import {
 } from './api'
 import { queryClient } from './query-client'
 
+function normalizeUser(user: AuthUser): AuthUser {
+  return { ...user, permissions: user.permissions ?? [] }
+}
+
 interface AuthState {
   user: AuthUser | null
   isLoading: boolean
@@ -32,7 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return
     }
     getMe()
-      .then(setUser)
+      .then(u => setUser(normalizeUser(u)))
       .catch(() => {
         clearTokens()
         setUser(null)
@@ -42,7 +46,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const data = await apiLogin(email, password)
-    setUser(data.user)
+    setUser(normalizeUser(data.user))
     return data
   }, [])
 

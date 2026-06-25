@@ -1,6 +1,6 @@
 import type { PurchaseDetail } from './purchases-api'
 import { statusLabel } from './purchases-api'
-import { DEFAULT_RECEIPT_META, type ReceiptMeta } from './receipt-export'
+import { DEFAULT_RECEIPT_META, DEFAULT_RECEIPT_PRINT, type ReceiptMeta, type ReceiptPrintOptions } from './receipt-export'
 
 function money(n: number): string {
   return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -17,6 +17,10 @@ function purchaseLines(purchase: PurchaseDetail, meta: ReceiptMeta): string[] {
   const lines: string[] = [
     meta.storeName ?? DEFAULT_RECEIPT_META.storeName!,
     meta.storePhone ?? DEFAULT_RECEIPT_META.storePhone!,
+  ]
+  if (meta.gstin) lines.push(`GSTIN: ${meta.gstin}`)
+  if (meta.address) lines.push(meta.address)
+  lines.push(
     '--------------------------------',
     'SUPPLIER PURCHASE BILL',
     `No.  ${purchase.purchaseNo}`,
@@ -25,7 +29,7 @@ function purchaseLines(purchase: PurchaseDetail, meta: ReceiptMeta): string[] {
     `Status  ${statusLabel(purchase.status)}`,
     '--------------------------------',
     `Supplier: ${purchase.supplierName}`,
-  ]
+  )
   if (purchase.supplierGstin) lines.push(`GSTIN: ${purchase.supplierGstin}`)
   if (purchase.supplierPhone) lines.push(`Phone: ${purchase.supplierPhone}`)
   lines.push('--------------------------------')
@@ -42,34 +46,44 @@ function purchaseLines(purchase: PurchaseDetail, meta: ReceiptMeta): string[] {
     lines.push(`Note: ${purchase.notes}`)
   }
   lines.push('--------------------------------')
+  lines.push(meta.billFooter?.trim() || 'Internal purchase record')
   return lines.filter(Boolean)
 }
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image()
+    img.crossOrigin = 'anonymous'
     img.onload = () => resolve(img)
     img.onerror = () => reject(new Error(`Failed to load logo: ${src}`))
     img.src = src
   })
 }
 
-async function renderCanvas(purchase: PurchaseDetail, meta: ReceiptMeta): Promise<HTMLCanvasElement> {
+async function renderCanvas(
+  purchase: PurchaseDetail,
+  meta: ReceiptMeta,
+  options: ReceiptPrintOptions = DEFAULT_RECEIPT_PRINT,
+): Promise<HTMLCanvasElement> {
+  const widthMm = options.widthMm === 58 ? 58 : 80
+  const width = Math.round(widthMm * 4)
   const lines = purchaseLines(purchase, meta)
-  const width = 320
-  const lineHeight = 18
-  const padding = 16
-  const logoUrl = meta.logoUrl ?? DEFAULT_RECEIPT_META.logoUrl!
+  const lineHeight = widthMm === 58 ? 16 : 18
+  const padding = widthMm === 58 ? 12 : 16
+  const showLogo = options.showLogo !== false
+  const logoUrl = showLogo ? (meta.logoUrl ?? DEFAULT_RECEIPT_META.logoUrl!) : undefined
 
   let logoBlock = 0
   let logoImg: HTMLImageElement | null = null
-  try {
-    logoImg = await loadImage(logoUrl)
-    const maxLogoWidth = width - padding * 2
-    const scale = Math.min(1, maxLogoWidth / logoImg.width)
-    logoBlock = logoImg.height * scale + 12
-  } catch {
-    logoImg = null
+  if (logoUrl) {
+    try {
+      logoImg = await loadImage(logoUrl)
+      const maxLogoWidth = width - padding * 2
+      const scale = Math.min(1, maxLogoWidth / logoImg.width)
+      logoBlock = logoImg.height * scale + 12
+    } catch {
+      logoImg = null
+    }
   }
 
   const height = padding * 2 + logoBlock + lines.length * lineHeight
@@ -107,35 +121,48 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
-export async function savePurchaseJpeg(purchase: PurchaseDetail, meta: ReceiptMeta = DEFAULT_RECEIPT_META) {
-  const canvas = await renderCanvas(purchase, meta)
+export async function savePurchaseJpeg(
+  purchase: PurchaseDetail,
+  meta: ReceiptMeta = DEFAULT_RECEIPT_META,
+  options: ReceiptPrintOptions = DEFAULT_RECEIPT_PRINT,
+) {
+  const canvas = await renderCanvas(purchase, meta, options)
   canvas.toBlob(blob => {
     if (blob) downloadBlob(blob, `${purchase.purchaseNo}.jpg`)
   }, 'image/jpeg', 0.92)
 }
 
-export async function savePurchasePdf(purchase: PurchaseDetail, meta: ReceiptMeta = DEFAULT_RECEIPT_META) {
-  const canvas = await renderCanvas(purchase, meta)
+export async function savePurchasePdf(
+  purchase: PurchaseDetail,
+  meta: ReceiptMeta = DEFAULT_RECEIPT_META,
+  options: ReceiptPrintOptions = DEFAULT_RECEIPT_PRINT,
+) {
+  const canvas = await renderCanvas(purchase, meta, options)
   const imgData = canvas.toDataURL('image/png')
   const { jsPDF } = await import('jspdf')
-  const widthMm = 80
+  const widthMm = options.widthMm === 58 ? 58 : 80
   const heightMm = (canvas.height / canvas.width) * widthMm
   const pdf = new jsPDF({ unit: 'mm', format: [widthMm, heightMm], orientation: 'portrait' })
   pdf.addImage(imgData, 'PNG', 0, 0, widthMm, heightMm)
   pdf.save(`${purchase.purchaseNo}.pdf`)
 }
 
-export async function printPurchase(purchase: PurchaseDetail, meta: ReceiptMeta = DEFAULT_RECEIPT_META) {
-  const canvas = await renderCanvas(purchase, meta)
+export async function printPurchase(
+  purchase: PurchaseDetail,
+  meta: ReceiptMeta = DEFAULT_RECEIPT_META,
+  options: ReceiptPrintOptions = DEFAULT_RECEIPT_PRINT,
+) {
+  const canvas = await renderCanvas(purchase, meta, options)
   const dataUrl = canvas.toDataURL('image/png')
+  const widthMm = options.widthMm === 58 ? 58 : 80
   const win = window.open('', '_blank', 'noopener,noreferrer,width=360,height=720')
   if (!win) return
   win.document.write(`<!DOCTYPE html>
 <html><head><title>${purchase.purchaseNo}</title>
 <style>
   body { margin: 0; display: flex; justify-content: center; background: #fff; }
-  img { width: 80mm; max-width: 100%; height: auto; }
-  @media print { body { margin: 0; } img { width: 80mm; } }
+  img { width: ${widthMm}mm; max-width: 100%; height: auto; }
+  @media print { body { margin: 0; } img { width: ${widthMm}mm; } }
 </style></head>
 <body><img src="${dataUrl}" alt="Purchase bill" onload="window.print(); window.close();" /></body></html>`)
   win.document.close()

@@ -11,6 +11,8 @@ import {
   type ProductFormData, type ApiCategory, type StockMovement,
 } from '@/lib/inventory-api'
 import { useProductsQuery, useCategoriesQuery, useInvalidateCatalog } from '@/lib/queries/use-catalog'
+import { canEditInventory, canImportInventory, canExportInventory } from '@/lib/rbac'
+import { useAuth } from '@/lib/auth-context'
 import { InventoryImportModal } from './inventory-import-modal'
 
 const STATUS_BADGE = {
@@ -19,10 +21,24 @@ const STATUS_BADGE = {
   out: { tone: 'danger',  label: 'Out of Stock' },
 } as const
 
-function RowMenu({ onEdit, onHistory, onAdjust }: { onEdit: () => void; onHistory: () => void; onAdjust: () => void }) {
+function RowMenu({ onEdit, onHistory, onAdjust }: {
+  onEdit?: () => void
+  onHistory: () => void
+  onAdjust?: () => void
+}) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useClickOutside(ref, () => setOpen(false), open)
+  const canEdit = Boolean(onEdit || onAdjust)
+
+  if (!canEdit) {
+    return (
+      <button className="icon-btn" style={{ width: 30, height: 30 }} onClick={onHistory} aria-label="Movement history">
+        <Icon name="history" size={17} />
+      </button>
+    )
+  }
+
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <button className="icon-btn" style={{ width: 30, height: 30 }} onClick={e => { e.stopPropagation(); setOpen(v => !v) }}>
@@ -30,9 +46,9 @@ function RowMenu({ onEdit, onHistory, onAdjust }: { onEdit: () => void; onHistor
       </button>
       {open && (
         <div className="popover" style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 184 }}>
-          <button className="menu-item" onClick={() => { setOpen(false); onAdjust() }}><Icon name="package-plus" size={16} className="lead" />Quick adjust stock</button>
+          {onAdjust && <button className="menu-item" onClick={() => { setOpen(false); onAdjust() }}><Icon name="package-plus" size={16} className="lead" />Quick adjust stock</button>}
           <button className="menu-item" onClick={() => { setOpen(false); onHistory() }}><Icon name="history" size={16} className="lead" />Movement history</button>
-          <button className="menu-item" onClick={() => { setOpen(false); onEdit() }}><Icon name="pencil" size={16} className="lead" />Edit product</button>
+          {onEdit && <button className="menu-item" onClick={() => { setOpen(false); onEdit() }}><Icon name="pencil" size={16} className="lead" />Edit product</button>}
         </div>
       )}
     </div>
@@ -221,6 +237,10 @@ export function Inventory({
   onPrefillConsumed?: () => void
 } = {}) {
   const toast = useToast()
+  const { user } = useAuth()
+  const canEdit = canEditInventory(user)
+  const canImport = canImportInventory(user)
+  const canExport = canExportInventory(user)
   const invalidateCatalog = useInvalidateCatalog()
   const productsQuery = useProductsQuery()
   const categoriesQuery = useCategoriesQuery()
@@ -340,11 +360,13 @@ export function Inventory({
           <div className="section-title">Inventory</div>
           <div className="section-sub">{products.length} products · {categories.length} categories</div>
         </div>
+        {(canImport || canExport || canEdit) && (
         <div className="row gap8">
-          <Button size="sm" icon="upload" onClick={() => setImportOpen(true)}>Bulk import</Button>
-          <Button size="sm" icon="download" onClick={() => toast(`Exported ${rows.length} rows to CSV`, { icon: 'file-down' })}>Export</Button>
-          <Button size="sm" variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add Product</Button>
+          {canImport && <Button size="sm" icon="upload" onClick={() => setImportOpen(true)}>Bulk import</Button>}
+          {canExport && <Button size="sm" icon="download" onClick={() => toast(`Exported ${rows.length} rows to CSV`, { icon: 'file-down' })}>Export</Button>}
+          {canEdit && <Button size="sm" variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add Product</Button>}
         </div>
+        )}
       </div>
 
       {lowCount > 0 && (
@@ -373,11 +395,11 @@ export function Inventory({
           <Select size="sm" width={150} value={status} onChange={v => { setStatus(v); setPage(0) }}
             options={[{ value: 'all', label: 'All statuses' }, { value: 'in', label: 'In stock' }, { value: 'low', label: 'Low stock' }, { value: 'out', label: 'Out of stock' }]} />
           <div style={{ flex: 1 }} />
-          {sel.size > 0 && (
+          {canEdit && sel.size > 0 && (
             <div className="row gap8">
               <span className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>{sel.size} selected</span>
               <Button size="sm" variant="outline" icon="package-plus" onClick={() => toast(`Bulk adjust for ${sel.size} items`)}>Adjust</Button>
-              <Button size="sm" variant="outline" icon="download" onClick={() => toast(`Exported ${sel.size} rows`)}>Export</Button>
+              {canExport && <Button size="sm" variant="outline" icon="download" onClick={() => toast(`Exported ${sel.size} rows`)}>Export</Button>}
             </div>
           )}
         </div>
@@ -386,7 +408,7 @@ export function Inventory({
           <table className="tbl">
             <thead>
               <tr>
-                <th style={{ width: 38 }}><Checkbox checked={allOn} onChange={toggleAll} /></th>
+                <th style={{ width: 38 }}>{canEdit ? <Checkbox checked={allOn} onChange={toggleAll} /> : null}</th>
                 <Th k="name">Product</Th>
                 <Th k="cat">Category</Th>
                 <th>Unit</th>
@@ -424,7 +446,7 @@ export function Inventory({
                 const sb = STATUS_BADGE[st]
                 return (
                   <tr key={p.id} className={sel.has(p.id) ? 'selected' : ''}>
-                    <td><Checkbox checked={sel.has(p.id)} onChange={() => toggleSel(p.id)} /></td>
+                    <td>{canEdit ? <Checkbox checked={sel.has(p.id)} onChange={() => toggleSel(p.id)} /> : null}</td>
                     <td>
                       <div className="row gap10">
                         <IconTile tone={CAT_TONE[p.cat] ?? 'tile-primary'} size={30} icon={CAT_ICON[p.cat] ?? 'package'} />
@@ -443,9 +465,9 @@ export function Inventory({
                     <td><Badge tone={sb.tone} dot>{sb.label}</Badge></td>
                     <td>
                       <RowMenu
-                        onEdit={() => setEditProduct(p)}
                         onHistory={() => setHistory(p)}
-                        onAdjust={() => setAdjust(p)}
+                        onAdjust={canEdit ? () => setAdjust(p) : undefined}
+                        onEdit={canEdit ? () => setEditProduct(p) : undefined}
                       />
                     </td>
                   </tr>
@@ -467,11 +489,11 @@ export function Inventory({
         </div>
       </Card>
 
-      {adjust && <AdjustModal product={adjust} onClose={() => setAdjust(null)} onSave={doAdjust} />}
+      {canEdit && adjust && <AdjustModal product={adjust} onClose={() => setAdjust(null)} onSave={doAdjust} />}
       {history && <HistoryDrawer product={history} onClose={() => setHistory(null)} />}
-      {addOpen && <ProductModal categories={categories} onClose={() => setAddOpen(false)} onSave={doAddProduct} />}
-      {editProduct && <ProductModal categories={categories} initialProduct={editProduct} onClose={() => setEditProduct(null)} onSave={doUpdateProduct} />}
-      {importOpen && (
+      {canEdit && addOpen && <ProductModal categories={categories} onClose={() => setAddOpen(false)} onSave={doAddProduct} />}
+      {canEdit && editProduct && <ProductModal categories={categories} initialProduct={editProduct} onClose={() => setEditProduct(null)} onSave={doUpdateProduct} />}
+      {canImport && importOpen && (
         <InventoryImportModal
           onClose={() => setImportOpen(false)}
           onComplete={() => { void invalidateCatalog.products(); toast('Bulk import complete', { icon: 'package-check' }) }}

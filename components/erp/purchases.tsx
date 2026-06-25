@@ -26,6 +26,8 @@ import { SupplierFormModal } from './supplier-form-modal'
 import { ProcurementImportModal } from './procurement-import-modal'
 import { SuppliersPanel } from './suppliers'
 import type { Supplier } from '@/lib/purchases-api'
+import { useAuth } from '@/lib/auth-context'
+import { canManagePurchases, canManageSuppliers } from '@/lib/rbac'
 
 function formatDate(iso: string): string {
   return new Date(iso + (iso.includes('T') ? '' : 'T00:00:00')).toLocaleDateString('en-IN', {
@@ -43,6 +45,9 @@ export function Purchases({
   onPrefillConsumed?: () => void
 } = {}) {
   const toast = useToast()
+  const { user } = useAuth()
+  const canManage = canManagePurchases(user)
+  const canSuppliers = canManageSuppliers(user)
   const invalidatePurchases = useInvalidatePurchases()
   const invalidateSuppliers = useInvalidateSuppliers()
   const invalidateCatalog = useInvalidateCatalog()
@@ -60,6 +65,10 @@ export function Purchases({
   const [editSupplier, setEditSupplier] = useState<Supplier | null>(null)
   const [importKind, setImportKind] = useState<'suppliers' | 'purchases' | null>(null)
   const [actionBusy, setActionBusy] = useState(false)
+
+  useEffect(() => {
+    if (tab === 'suppliers' && !canSuppliers) setTab('bills')
+  }, [tab, canSuppliers])
 
   const statusApi = STATUS_FILTERS.find(f => f.value === status)?.api ?? 'all'
 
@@ -122,8 +131,10 @@ export function Purchases({
           <div className="section-title">Purchases</div>
           <div className="section-sub">Supplier bills · stock in on GRN receive</div>
         </div>
+        {(canManage || canSuppliers) && (
         <div className="row gap8" style={{ flexWrap: 'wrap' }}>
           {tab === 'bills' ? (
+            canManage && (
             <>
               <Button size="sm" variant="outline" icon="upload" onClick={() => setImportKind('purchases')}>
                 Bulk record
@@ -132,7 +143,9 @@ export function Purchases({
                 Record purchase
               </Button>
             </>
+            )
           ) : (
+            canSuppliers && (
             <>
               <Button size="sm" variant="outline" icon="upload" onClick={() => setImportKind('suppliers')}>
                 Import suppliers
@@ -141,8 +154,10 @@ export function Purchases({
                 Add supplier
               </Button>
             </>
+            )
           )}
         </div>
+        )}
       </div>
 
       <div className="kpi-grid">
@@ -156,14 +171,17 @@ export function Purchases({
         <button type="button" className={'chip' + (tab === 'bills' ? ' on' : '')} onClick={() => setTab('bills')}>
           Purchase bills
         </button>
+        {canSuppliers && (
         <button type="button" className={'chip' + (tab === 'suppliers' ? ' on' : '')} onClick={() => setTab('suppliers')}>
           Suppliers
           <span className="ct">{suppliers.length}</span>
         </button>
+        )}
       </div>
 
-      {tab === 'suppliers' ? (
+      {tab === 'suppliers' && canSuppliers ? (
         <SuppliersPanel
+          canManage={canSuppliers}
           onInvalidate={invalidateSuppliers}
           onAddSupplier={() => { setEditSupplier(null); setSupplierFormOpen(true) }}
           onImportSuppliers={() => setImportKind('suppliers')}
@@ -235,7 +253,7 @@ export function Purchases({
               ) : rows.length === 0 ? (
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--fg-subtle)', fontSize: 13 }}>
-                    No purchases yet. Click <b>Record purchase</b> to create your first supplier bill.
+                    No purchases yet.{canManage ? <> Click <b>Record purchase</b> to create your first supplier bill.</> : null}
                   </td>
                 </tr>
               ) : rows.map(p => (
@@ -273,7 +291,7 @@ export function Purchases({
       </Card>
       )}
 
-      {formOpen && (
+      {canManage && formOpen && (
         <PurchaseFormModal
           suppliers={suppliers}
           onClose={() => setFormOpen(false)}
@@ -286,7 +304,7 @@ export function Purchases({
         />
       )}
 
-      {(supplierFormOpen || editSupplier) && (
+      {canSuppliers && (supplierFormOpen || editSupplier) && (
         <SupplierFormModal
           supplier={editSupplier}
           onClose={() => { setSupplierFormOpen(false); setEditSupplier(null) }}
@@ -297,7 +315,7 @@ export function Purchases({
         />
       )}
 
-      {importKind && (
+      {(importKind === 'suppliers' ? canSuppliers : canManage) && importKind && (
         <ProcurementImportModal
           kind={importKind}
           suppliers={importKind === 'purchases' ? suppliers : undefined}
@@ -317,13 +335,13 @@ export function Purchases({
           error={detailQuery.error?.message}
           busy={actionBusy}
           onClose={() => setSelectedId(null)}
-          onConfirm={detailQuery.data?.status === 'DRAFT'
+          onConfirm={canManage && detailQuery.data?.status === 'DRAFT'
             ? () => runAction(() => confirmPurchase(selectedId), 'Order confirmed — awaiting delivery')
             : undefined}
-          onReceive={(detailQuery.data?.status === 'DRAFT' || detailQuery.data?.status === 'PENDING_GRN')
+          onReceive={canManage && (detailQuery.data?.status === 'DRAFT' || detailQuery.data?.status === 'PENDING_GRN')
             ? () => runAction(() => receivePurchase(selectedId), 'GRN received · stock updated')
             : undefined}
-          onPay={detailQuery.data?.status === 'BILLED'
+          onPay={canManage && detailQuery.data?.status === 'BILLED'
             ? () => runAction(() => payPurchase(selectedId), 'Marked as paid')
             : undefined}
         />

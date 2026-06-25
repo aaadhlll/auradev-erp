@@ -3,7 +3,8 @@
 import { Icon, Button, Badge, Drawer } from './ui'
 import { money, money2 } from '@/lib/erp-data'
 import type { SavedBill } from '@/lib/billing-api'
-import { DEFAULT_RECEIPT_META, printReceipt, saveReceiptPdf, saveReceiptPng } from '@/lib/receipt-export'
+import { printReceipt, saveReceiptPdf, saveReceiptPng } from '@/lib/receipt-export'
+import { useReceiptMeta, useReceiptPrintOptions } from '@/lib/queries/use-settings'
 import { useToast } from './ui'
 
 function formatBillDate(iso: string): string {
@@ -36,6 +37,8 @@ export function BillDetailDrawer({
   onClose: () => void
 }) {
   const toast = useToast()
+  const receiptMeta = useReceiptMeta()
+  const printOptions = useReceiptPrintOptions()
 
   if (!bill && !loading) return null
 
@@ -142,17 +145,17 @@ export function BillDetailDrawer({
               variant="primary"
               icon="printer"
               onClick={() => {
-                void printReceipt(bill, DEFAULT_RECEIPT_META).catch(() => {
+                void printReceipt(bill, receiptMeta, printOptions).catch(() => {
                   toast('Could not open print dialog', { tone: 'danger' })
                 })
               }}
             >
               Print
             </Button>
-            <Button variant="outline" icon="file-down" onClick={() => void saveReceiptPdf(bill, DEFAULT_RECEIPT_META)}>
+            <Button variant="outline" icon="file-down" onClick={() => void saveReceiptPdf(bill, receiptMeta, printOptions)}>
               PDF
             </Button>
-            <Button variant="outline" icon="image" onClick={() => void saveReceiptPng(bill, DEFAULT_RECEIPT_META)}>
+            <Button variant="outline" icon="image" onClick={() => void saveReceiptPng(bill, receiptMeta, printOptions)}>
               PNG
             </Button>
           </div>

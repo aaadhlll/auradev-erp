@@ -109,6 +109,7 @@ export interface AuthUser {
   status: string
   lastLoginAt: string | null
   createdAt: string
+  permissions: string[]
 }
 
 export interface LoginResponse {

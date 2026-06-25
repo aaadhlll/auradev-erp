@@ -18,6 +18,7 @@ import { useDebouncedValue } from '@/lib/queries/use-debounced-value'
 import { useCustomersQuery } from '@/lib/queries/use-customers'
 import { usePosSearchQuery } from '@/lib/queries/use-pos-search'
 import { useAuth } from '@/lib/auth-context'
+import { canCreateBill, canEditInventory, canAccessView, canManagePurchases } from '@/lib/rbac'
 
 function localIsoDate(d: Date): string {
   const y = d.getFullYear()
@@ -656,6 +657,10 @@ export function Dashboard({
   active?: boolean
 }) {
   const { user } = useAuth()
+  const canBill = canCreateBill(user)
+  const canStock = canEditInventory(user)
+  const canBills = canAccessView(user, 'bills')
+  const canPurchases = canManagePurchases(user)
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_DASHBOARD_FILTERS)
   const debouncedFilters = useDebouncedValue(filters, 300)
   const filtersPending = dashboardFiltersKey(filters) !== dashboardFiltersKey(debouncedFilters)
@@ -756,9 +761,9 @@ export function Dashboard({
           <Button size="sm" icon="refresh-cw" onClick={() => void refetch()} disabled={loading || !customRangeReady}>
             {loading ? 'Updating…' : 'Refresh'}
           </Button>
-          <Button size="sm" icon="package-plus" onClick={() => setView('inventory')}>Stock Adjustment</Button>
-          <Button size="sm" icon="plus" onClick={() => setView('inventory')}>Add Product</Button>
-          <Button size="sm" variant="primary" icon="scan-line" onClick={() => setView('pos')}>New Bill</Button>
+          {canStock && <Button size="sm" icon="package-plus" onClick={() => setView('inventory')}>Stock Adjustment</Button>}
+          {canStock && <Button size="sm" icon="plus" onClick={() => setView('inventory')}>Add Product</Button>}
+          {canBill && <Button size="sm" variant="primary" icon="scan-line" onClick={() => setView('pos')}>New Bill</Button>}
         </div>
       </div>
 
@@ -856,11 +861,11 @@ export function Dashboard({
         <Card
           title="Recent bills"
           sub={d.meta.filtersActive ? `Matching bills in ${periodLabel}` : 'Last 10 transactions in period'}
-          action={
+          action={canBills ? (
             <Button size="sm" variant="ghost" iconRight="arrow-right" onClick={() => setView('bills')}>
               View all
             </Button>
-          }
+          ) : undefined}
           noBody
         >
           <div className="tbl-wrap">
@@ -883,8 +888,8 @@ export function Dashboard({
                   <tr
                     key={b.id}
                     className="tbl-row-click"
-                    onClick={() => onOpenBill?.(b.id)}
-                    style={{ cursor: onOpenBill ? 'pointer' : undefined }}
+                    onClick={() => canBills && onOpenBill?.(b.id)}
+                    style={{ cursor: canBills && onOpenBill ? 'pointer' : undefined }}
                   >
                     <td className="mono td-strong" style={{ fontSize: 12.5 }}>{b.no}</td>
                     <td>{b.cust}</td>
@@ -915,7 +920,7 @@ export function Dashboard({
                         {p.status === 'out' ? 'Out of stock' : `${p.stock} ${p.unit} left`} · reorder {p.reorder}
                       </div>
                     </div>
-                    <Button size="sm" variant="outline" onClick={() => setView('inventory')}>Reorder</Button>
+                    {canPurchases && <Button size="sm" variant="outline" onClick={() => setView('purchases')}>Reorder</Button>}
                   </div>
                 ))}
               </div>

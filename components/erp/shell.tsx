@@ -1,14 +1,14 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useRef } from 'react'
 import { Icon } from './ui'
 import { Avatar } from './ui'
 import { useAuth } from '@/lib/auth-context'
+import { canAccessView, formatRoleLabel } from '@/lib/rbac'
 import { MercantileMark } from '@/components/brand/MercantileMark'
+import { useClickOutside } from './ui'
 
 export type ViewId = 'dashboard' | 'pos' | 'bills' | 'inventory' | 'purchases' | 'settings'
-
-type ToastFn = (msg: string, opts?: { icon?: string; tone?: string }) => void
 
 const NAV = [
   {
@@ -24,11 +24,6 @@ const NAV = [
       { id: 'purchases' as ViewId, label: 'Purchases', icon: 'truck' },
     ],
   },
-  {
-    label: 'Administration', items: [
-      { id: 'settings' as ViewId, label: 'Settings', icon: 'settings' },
-    ],
-  },
 ]
 
 const VIEW_META: Record<ViewId, { title: string; crumb: string }> = {
@@ -41,11 +36,23 @@ const VIEW_META: Record<ViewId, { title: string; crumb: string }> = {
 }
 
 export function Sidebar({
-  view, setView, collapsed, toast,
+  view, setView, collapsed,
 }: {
-  view: ViewId; setView: (v: ViewId) => void; collapsed: boolean; toast: ToastFn
+  view: ViewId
+  setView: (v: ViewId) => void
+  collapsed: boolean
 }) {
   const { user, logout } = useAuth()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuRef = useRef<HTMLDivElement>(null)
+  useClickOutside(menuRef, () => setMenuOpen(false), menuOpen)
+
+  const canSettings = canAccessView(user, 'settings')
+
+  function pickView(next: ViewId) {
+    setView(next)
+    setMenuOpen(false)
+  }
 
   return (
     <aside className={'sidebar' + (collapsed ? ' collapsed' : '')}>
@@ -59,10 +66,13 @@ export function Sidebar({
       </div>
 
       <div className="sb-scroll">
-        {NAV.map(sec => (
+        {NAV.map(sec => {
+          const items = sec.items.filter(it => canAccessView(user, it.id))
+          if (!items.length) return null
+          return (
           <div className="sb-section" key={sec.label}>
             <div className="sb-label">{sec.label}</div>
-            {sec.items.map(it => (
+            {items.map(it => (
               <button
                 key={it.id}
                 className={'sb-nav' + (view === it.id ? ' active' : '')}
@@ -77,35 +87,73 @@ export function Sidebar({
               </button>
             ))}
           </div>
-        ))}
+          )
+        })}
       </div>
 
       <div className="sb-foot">
-        <div className="sb-user">
-          <Avatar name={user?.name ?? ''} size="sm" />
-          <div className="who">
-            <div className="n">{user?.name ?? '—'}</div>
-            <div className="r">{user?.role?.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase()) ?? ''}</div>
-          </div>
+        <div ref={menuRef} className="sb-user-wrap">
           <button
-            className="icon-btn"
-            style={{ marginLeft: 'auto', flexShrink: 0 }}
-            title="Sign out"
-            onClick={() => logout()}
+            type="button"
+            className={'sb-user' + (menuOpen ? ' open' : '')}
+            onClick={() => setMenuOpen(o => !o)}
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
           >
-            <Icon name="log-out" size={15} />
+            <Avatar name={user?.name ?? ''} size="sm" />
+            <div className="who">
+              <div className="n">{user?.name ?? '—'}</div>
+              <div className="r">{user?.role ? formatRoleLabel(user.role) : ''}</div>
+            </div>
+            <Icon name={menuOpen ? 'chevron-down' : 'chevron-up'} size={15} className="chev" />
           </button>
+
+          {menuOpen && (
+            <div className="sb-user-menu popover" role="menu">
+              <div className="sb-user-menu-head">
+                <Avatar name={user?.name ?? ''} size="lg" />
+                <div className="who">
+                  <div className="n">{user?.name ?? '—'}</div>
+                  <div className="e">{user?.email ?? ''}</div>
+                  <div className="r">{user?.role ? formatRoleLabel(user.role) : ''}</div>
+                </div>
+              </div>
+              {canSettings && (
+                <>
+                  <button type="button" className="menu-item" role="menuitem" onClick={() => pickView('settings')}>
+                    <Icon name="settings" size={16} className="lead" />
+                    Settings
+                  </button>
+                  <div className="menu-divider" />
+                </>
+              )}
+              <button
+                type="button"
+                className="menu-item danger"
+                role="menuitem"
+                onClick={() => { setMenuOpen(false); logout() }}
+              >
+                <Icon name="log-out" size={16} className="lead" />
+                Sign out
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </aside>
   )
 }
 
+import type { Theme } from '@/lib/theme'
+
 export function Topbar({
-  view, theme, setTheme, collapsed, setCollapsed, onCmd,
+  view, theme, onToggleTheme, collapsed, setCollapsed, onCmd,
 }: {
-  view: ViewId; theme: string; setTheme: (t: string) => void;
-  collapsed: boolean; setCollapsed: (fn: (c: boolean) => boolean) => void;
+  view: ViewId
+  theme: Theme
+  onToggleTheme: () => void
+  collapsed: boolean
+  setCollapsed: (fn: (c: boolean) => boolean) => void
   onCmd: () => void
 }) {
   const meta = VIEW_META[view] ?? { title: '', crumb: '' }
@@ -128,7 +176,7 @@ export function Topbar({
       <button className="icon-btn" aria-label="Notifications">
         <Icon name="bell" size={18} /><span className="dot" />
       </button>
-      <button className="icon-btn" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} aria-label="Toggle theme">
+      <button className="icon-btn" onClick={onToggleTheme} aria-label="Toggle theme">
         <Icon name={theme === 'dark' ? 'sun' : 'moon'} size={18} />
       </button>
     </header>

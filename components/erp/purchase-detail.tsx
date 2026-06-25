@@ -4,8 +4,8 @@ import { Icon, Button, Badge, Drawer, useToast } from './ui'
 import { money, money2 } from '@/lib/erp-data'
 import type { PurchaseDetail } from '@/lib/purchases-api'
 import { statusLabel, statusTone } from '@/lib/purchases-api'
-import { DEFAULT_RECEIPT_META } from '@/lib/receipt-export'
 import { printPurchase, savePurchaseJpeg, savePurchasePdf } from '@/lib/purchase-export'
+import { useReceiptMeta, useReceiptPrintOptions } from '@/lib/queries/use-settings'
 
 function formatDate(iso: string): string {
   return new Date(iso + (iso.includes('T') ? '' : 'T00:00:00')).toLocaleDateString('en-IN', {
@@ -33,6 +33,8 @@ export function PurchaseDetailDrawer({
   onPay?: () => void
 }) {
   const toast = useToast()
+  const receiptMeta = useReceiptMeta()
+  const printOptions = useReceiptPrintOptions()
 
   if (!purchase && !loading) return null
 
@@ -130,17 +132,17 @@ export function PurchaseDetailDrawer({
 
           <div className="row gap8" style={{ flexWrap: 'wrap', marginBottom: 16 }}>
             <Button variant="primary" icon="printer" onClick={() => {
-              void printPurchase(purchase, DEFAULT_RECEIPT_META).catch(() => {
+              void printPurchase(purchase, receiptMeta, printOptions).catch(() => {
                 toast('Could not open print dialog', { tone: 'danger' })
               })
             }}>Print</Button>
             <Button variant="outline" icon="file-down" onClick={() => {
-              void savePurchasePdf(purchase, DEFAULT_RECEIPT_META).catch(() => {
+              void savePurchasePdf(purchase, receiptMeta, printOptions).catch(() => {
                 toast('Could not save PDF', { tone: 'danger' })
               })
             }}>PDF</Button>
             <Button variant="outline" icon="image" onClick={() => {
-              void savePurchaseJpeg(purchase, DEFAULT_RECEIPT_META).catch(() => {
+              void savePurchaseJpeg(purchase, receiptMeta, printOptions).catch(() => {
                 toast('Could not save JPG', { tone: 'danger' })
               })
             }}>JPG</Button>

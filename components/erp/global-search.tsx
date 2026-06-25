@@ -5,6 +5,7 @@ import { createPortal } from 'react-dom'
 import { Icon } from './ui'
 import {
   runGlobalSearch,
+  filterSearchResults,
   searchPages,
   SEARCH_GROUP_LABEL,
   SEARCH_GROUP_ORDER,
@@ -12,6 +13,7 @@ import {
   type SearchResultKind,
 } from '@/lib/global-search'
 import type { ViewId } from './shell'
+import { useAuth } from '@/lib/auth-context'
 
 export interface GlobalSearchSelect {
   view: ViewId
@@ -36,6 +38,7 @@ export function GlobalSearch({
   onClose: () => void
   onSelect: (sel: GlobalSearchSelect) => void
 }) {
+  const { user } = useAuth()
   const [q, setQ] = useState('')
   const [results, setResults] = useState<SearchResult[]>([])
   const [loading, setLoading] = useState(false)
@@ -72,7 +75,7 @@ export function GlobalSearch({
       setLoading(true)
       setError(null)
       try {
-        const r = await runGlobalSearch(q)
+        const r = await runGlobalSearch(q, user)
         if (!cancelled) {
           setResults(r)
           setActive(0)
@@ -80,14 +83,14 @@ export function GlobalSearch({
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : 'Search failed')
-          setResults(q.trim() ? searchPages(q) : searchPages(''))
+          setResults(filterSearchResults(user, q.trim() ? searchPages(q) : searchPages('')))
         }
       } finally {
         if (!cancelled) setLoading(false)
       }
     }, q.trim() ? 200 : 0)
     return () => { cancelled = true; clearTimeout(timer) }
-  }, [q, open])
+  }, [q, open, user])
 
   const pick = useCallback((r: SearchResult) => {
     onSelect({ view: r.view, query: r.query, billId: r.billId })

@@ -8,10 +8,12 @@ import { SupplierFormModal } from './supplier-form-modal'
 import { ProcurementImportModal } from './procurement-import-modal'
 
 export function SuppliersPanel({
+  canManage = true,
   onInvalidate,
   onAddSupplier,
   onImportSuppliers,
 }: {
+  canManage?: boolean
   onInvalidate: () => void
   onAddSupplier?: () => void
   onImportSuppliers?: () => void
@@ -60,10 +62,12 @@ export function SuppliersPanel({
             />
           </div>
           <div style={{ flex: 1 }} />
+          {canManage && (
           <div className="row gap8">
             <Button size="sm" variant="outline" icon="upload" onClick={openImport}>Import</Button>
             <Button size="sm" variant="primary" icon="plus" onClick={openAdd}>Add supplier</Button>
           </div>
+          )}
         </div>
 
         <div className="tbl-wrap">
@@ -95,7 +99,7 @@ export function SuppliersPanel({
                 <tr>
                   <td colSpan={6} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--fg-subtle)', fontSize: 13 }}>
                     {suppliers.length === 0
-                      ? <>No suppliers yet. Click <b>Add supplier</b> or <b>Import</b>.</>
+                      ? <>{canManage ? <>No suppliers yet. Click <b>Add supplier</b> or <b>Import</b>.</> : 'No suppliers yet.'}</>
                       : 'No suppliers match your search.'}
                   </td>
                 </tr>
@@ -114,9 +118,11 @@ export function SuppliersPanel({
                     {s.address || '—'}
                   </td>
                   <td>
+                    {canManage && (
                     <Button size="sm" variant="ghost" icon="pencil" onClick={() => setEditSupplier(s)}>
                       Edit
                     </Button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -132,14 +138,14 @@ export function SuppliersPanel({
         </div>
       </Card>
 
-      {formOpen && (
+      {canManage && formOpen && (
         <SupplierFormModal
           onClose={() => setFormOpen(false)}
           onSaved={onInvalidate}
         />
       )}
 
-      {editSupplier && (
+      {canManage && editSupplier && (
         <SupplierFormModal
           supplier={editSupplier}
           onClose={() => setEditSupplier(null)}

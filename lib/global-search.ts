@@ -1,4 +1,6 @@
 import type { ViewId } from '@/components/erp/shell'
+import type { AuthUser } from './api'
+import { canAccessView } from './rbac'
 import { fetchGlobalSearch } from './search-api'
 import { fetchPurchases } from './purchases-api'
 
@@ -58,9 +60,14 @@ export async function searchPurchases(q: string): Promise<SearchResult[]> {
   }
 }
 
-export async function runGlobalSearch(q: string): Promise<SearchResult[]> {
+export function filterSearchResults(user: AuthUser | null | undefined, results: SearchResult[]): SearchResult[] {
+  if (!user) return []
+  return results.filter(r => canAccessView(user, r.view))
+}
+
+export async function runGlobalSearch(q: string, user?: AuthUser | null): Promise<SearchResult[]> {
   const trimmed = q.trim()
-  const pages = searchPages(trimmed)
+  const pages = filterSearchResults(user, searchPages(trimmed))
 
   if (!trimmed) return pages
 
@@ -85,7 +92,7 @@ export async function runGlobalSearch(q: string): Promise<SearchResult[]> {
   })
 
   const pageHits = pages.slice(0, 3)
-  return [...pageHits, ...apiResults, ...purchases]
+  return filterSearchResults(user, [...pageHits, ...apiResults, ...purchases])
 }
 
 export const SEARCH_GROUP_LABEL: Record<SearchResultKind, string> = {

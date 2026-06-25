@@ -14,7 +14,10 @@ import {
   type SavedBill,
   type HeldBillSummary,
 } from '@/lib/billing-api'
-import { saveReceiptPng, saveReceiptPdf, DEFAULT_RECEIPT_META } from '@/lib/receipt-export'
+import { saveReceiptPng, saveReceiptPdf, printReceipt, type ReceiptMeta, type ReceiptPrintOptions } from '@/lib/receipt-export'
+import { useReceiptMeta, usePrinterSettingsQuery, useBillingSettingsQuery, useReceiptPrintOptions, mergePrintOptions } from '@/lib/queries/use-settings'
+import { useAuth } from '@/lib/auth-context'
+import { canHoldBill } from '@/lib/rbac'
 import { useInvalidateCatalog } from '@/lib/queries/use-catalog'
 import { useCustomersQuery } from '@/lib/queries/use-customers'
 import { useInvalidateDashboard } from '@/lib/queries/use-dashboard'
@@ -51,9 +54,10 @@ function ProductCard({ p, onAdd, dense }: { p: Product; onAdd: (p: Product) => v
 
 const PAY_ICON: Record<string, string> = { Cash: 'banknote', UPI: 'qr-code', Card: 'credit-card', Credit: 'notebook-pen', Split: 'split' }
 
-function PaymentModal({ total, customer, onClose, onDone, busy }: {
+function PaymentModal({ total, customer, allowCreditSales, onClose, onDone, busy }: {
   total: number
   customer: ApiCustomer | undefined
+  allowCreditSales: boolean
   onClose: () => void
   onDone: (method: string, tendered: number, splitCash: number) => void
   busy?: boolean
@@ -66,8 +70,8 @@ function PaymentModal({ total, customer, onClose, onDone, busy }: {
   const change = Math.max(0, tend - total)
   const sCash = parseFloat(splitCash) || 0
   const sUpi = Math.max(0, total - sCash)
-  const allowCredit = customer && customer.type !== 'walkin'
-  const methods = ['Cash', 'UPI', 'Card', 'Credit', 'Split']
+  const allowCredit = allowCreditSales && customer && customer.type !== 'walkin'
+  const methods = ['Cash', 'UPI', 'Card', 'Split', ...(allowCreditSales ? ['Credit'] : [])]
   const quick = [total, Math.ceil(total / 100) * 100, Math.ceil(total / 500) * 500, 2000]
     .filter((v, i, a) => a.indexOf(v) === i && v >= total).slice(0, 3)
 
@@ -82,7 +86,7 @@ function PaymentModal({ total, customer, onClose, onDone, busy }: {
         </Button>
       </>}
     >
-      <div className="seg" style={{ width: '100%', display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', marginBottom: 18 }}>
+      <div className="seg" style={{ width: '100%', display: 'grid', gridTemplateColumns: `repeat(${methods.length},1fr)`, marginBottom: 18 }}>
         {methods.map(m => (
           <button key={m} className={method === m ? 'on' : ''} onClick={() => setMethod(m)} style={{ justifyContent: 'center' }}>
             <Icon name={PAY_ICON[m]} size={14} />{m}
@@ -185,12 +189,14 @@ function PaymentModal({ total, customer, onClose, onDone, busy }: {
   )
 }
 
-function ReceiptModal({ bill, onClose }: { bill: SavedBill; onClose: () => void }) {
+function ReceiptModal({ bill, meta, printOptions, onClose }: {
+  bill: SavedBill; meta: ReceiptMeta; printOptions: ReceiptPrintOptions; onClose: () => void
+}) {
   return (
     <Modal title="Bill saved" sub={bill.billNo} icon="receipt" onClose={onClose}
       footer={<>
-        <Button variant="outline" icon="image" onClick={() => saveReceiptPng(bill, DEFAULT_RECEIPT_META)}>Download PNG</Button>
-        <Button variant="primary" icon="file-down" onClick={() => saveReceiptPdf(bill, DEFAULT_RECEIPT_META)}>Download PDF</Button>
+        <Button variant="outline" icon="image" onClick={() => saveReceiptPng(bill, meta, printOptions)}>Download PNG</Button>
+        <Button variant="primary" icon="file-down" onClick={() => saveReceiptPdf(bill, meta, printOptions)}>Download PDF</Button>
       </>}
     >
       <div className="pay-summary" style={{ fontSize: 13 }}>
@@ -286,6 +292,16 @@ export function POS({
   onPrefillConsumed?: () => void
 } = {}) {
   const toast = useToast()
+  const { user } = useAuth()
+  const receiptMeta = useReceiptMeta()
+  const printerQuery = usePrinterSettingsQuery()
+  const billingQuery = useBillingSettingsQuery()
+  const printOptions = useReceiptPrintOptions()
+  const billing = billingQuery.data
+  const allowHold = canHoldBill(user) && billing?.allowHoldBill !== false
+  const maxBillDisc = user?.role === 'CASHIER'
+    ? (billing?.cashierMaxBillDiscountPercent ?? 5)
+    : (billing?.maxBillDiscountPercent ?? 15)
   const scannerRef = useRef<HTMLInputElement>(null)
   const invalidateCatalog = useInvalidateCatalog()
   const invalidateDashboard = useInvalidateDashboard()
@@ -477,7 +493,11 @@ export function POS({
       setPayOpen(false)
       resetCart()
       setSavedBill(bill)
-      void saveReceiptPng(bill, DEFAULT_RECEIPT_META)
+      if (printerQuery.data?.autoPrint) {
+        void printReceipt(bill, receiptMeta, printOptions)
+      } else {
+        void saveReceiptPng(bill, receiptMeta, printOptions)
+      }
       toast(`Bill ${bill.billNo} saved · stock updated`, { icon: 'receipt' })
       focusScanner()
     } catch (e) {
@@ -618,7 +638,7 @@ export function POS({
       </div>
       <div className="pos-totals">
         <div className="pos-discount-row">
-          <span className="muted">Bill discount</span>
+          <span className="muted">Bill discount <span className="td-sub">(max {maxBillDisc}%)</span></span>
           <div className="row gap6" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             <div className="seg" style={{ padding: 2 }}>
               {['₹', '%'].map(m => (
@@ -636,12 +656,16 @@ export function POS({
         <div className="divider" style={{ margin: '6px 0' }} />
         <div className="t-row grand"><span>Total</span><span className="tnum">{money2(grand)}</span></div>
         <div className="pos-cart-actions">
+          {allowHold && (
           <Button variant="outline" size="sm" icon="pause" disabled={!cart.length || holdBusy} onClick={holdBill}>
             {holdBusy ? '…' : 'Hold'}
           </Button>
+          )}
+          {allowHold && (
           <Button variant="outline" size="sm" icon="list" onClick={() => setParkedOpen(true)}>
             Parked{heldBills.length ? ` (${heldBills.length})` : ''}
           </Button>
+          )}
           <Button variant="outline" size="sm" icon="trash-2" onClick={clearBill}>Clear</Button>
         </div>
         <Button variant="primary" className="block pos-pay-btn" icon="wallet" disabled={!cart.length} onClick={() => setPayOpen(true)}>
@@ -764,12 +788,13 @@ export function POS({
         <PaymentModal
           total={grand}
           customer={customer}
+          allowCreditSales={billing?.allowCreditSales !== false}
           onClose={() => !payBusy && setPayOpen(false)}
           onDone={completeSale}
           busy={payBusy}
         />
       )}
-      {savedBill && <ReceiptModal bill={savedBill} onClose={() => setSavedBill(null)} />}
+      {savedBill && <ReceiptModal bill={savedBill} meta={receiptMeta} printOptions={printOptions} onClose={() => setSavedBill(null)} />}
       {parkedOpen && (
         <ParkedBillsModal
           bills={heldBills}

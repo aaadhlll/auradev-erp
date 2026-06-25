@@ -1,9 +1,10 @@
 'use client'
 
-import { useState, type FormEvent, useEffect } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useAuth } from '@/lib/auth-context'
 import { ApiError } from '@/lib/api'
 import { MercantileMark } from '@/components/brand/MercantileMark'
+import { useTheme } from '@/lib/theme'
 
 // ── Icons (inline SVG to avoid Lucide dep in login path) ──────────────────────
 function IcoMail() {
@@ -108,18 +109,13 @@ function PasswordInput({
 // ── Main LoginScreen ──────────────────────────────────────────────────────────
 export function LoginScreen() {
   const { login } = useAuth()
-  const [theme, setTheme] = useState<'light' | 'dark'>('light')
+  const { theme, toggleTheme } = useTheme()
   const [email, setEmail] = useState('')
   const [pwd, setPwd] = useState('')
   const [remember, setRemember] = useState(true)
   const [errors, setErrors] = useState<{ email?: string; pwd?: string }>({})
   const [apiError, setApiError] = useState('')
   const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark')
-    return () => { document.documentElement.classList.remove('dark') }
-  }, [theme])
 
   function validate() {
     const e: { email?: string; pwd?: string } = {}
@@ -193,7 +189,7 @@ export function LoginScreen() {
       {/* ── Form panel ── */}
       <div className="auth-main">
         <div className="auth-topbar">
-          <button className="icon-btn" onClick={() => setTheme(t => t === 'dark' ? 'light' : 'dark')} aria-label="Toggle theme">
+          <button className="icon-btn" onClick={toggleTheme} aria-label="Toggle theme">
             {theme === 'dark' ? <IcoSun /> : <IcoMoon />}
           </button>
         </div>

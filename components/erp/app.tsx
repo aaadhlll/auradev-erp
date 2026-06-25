@@ -11,21 +11,22 @@ import { Purchases } from './purchases'
 import { Bills } from './bills'
 import { Settings } from './settings'
 import { LoginScreen } from './login'
+import { BrandedLoader } from './branded-loader'
 import { useAuth } from '@/lib/auth-context'
-import { MercantileMark } from '@/components/brand/MercantileMark'
+import { canAccessView, firstAccessibleView } from '@/lib/rbac'
+import { useTheme } from '@/lib/theme'
+
+const SPLASH_MS = 2500
 
 function AppInner() {
   const toast = useToast()
+  const { user } = useAuth()
+  const { theme, toggleTheme } = useTheme()
   const [view, setView] = useState<ViewId>('dashboard')
-  const [theme, setThemeState] = useState<'light' | 'dark'>('light')
   const [collapsed, setCollapsed] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [prefill, setPrefill] = useState<{ view: ViewId; q: string; key: number } | null>(null)
   const [openBillId, setOpenBillId] = useState<string | null>(null)
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', theme === 'dark')
-  }, [theme])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -43,6 +44,12 @@ function AppInner() {
     if (view === 'pos') setSearchOpen(false)
   }, [view])
 
+  useEffect(() => {
+    if (user && !canAccessView(user, view)) {
+      setView(firstAccessibleView(user))
+    }
+  }, [user, view])
+
   function handleSearchSelect(sel: GlobalSearchSelect) {
     setView(sel.view)
     if (sel.billId) {
@@ -52,20 +59,16 @@ function AppInner() {
     if (sel.query) setPrefill({ view: sel.view, q: sel.query, key: Date.now() })
   }
 
-  function setTheme(t: string) {
-    setThemeState(t as 'light' | 'dark')
-  }
-
   const isPOS = view === 'pos'
 
   return (
     <div className="app">
-      <Sidebar view={view} setView={setView} collapsed={collapsed} toast={toast} />
+      <Sidebar view={view} setView={setView} collapsed={collapsed} />
       <div className="main">
         <Topbar
           view={view}
           theme={theme}
-          setTheme={setTheme}
+          onToggleTheme={toggleTheme}
           collapsed={collapsed}
           setCollapsed={setCollapsed}
           onCmd={() => setSearchOpen(true)}
@@ -126,48 +129,40 @@ function AppInner() {
 
 export function ERPApp() {
   const { user, isLoading } = useAuth()
-  const [loggingIn, setLoggingIn] = useState(false)
-  const confirmedLoggedOut = useRef(false)
+  useTheme()
+  const [splash, setSplash] = useState(true)
+  const splashAt = useRef(Date.now())
+  const wasLoggedOut = useRef(false)
 
   useEffect(() => {
-    if (!isLoading && !user) {
-      confirmedLoggedOut.current = true
+    if (isLoading) {
+      setSplash(true)
+      splashAt.current = Date.now()
       return
     }
-    if (confirmedLoggedOut.current && user) {
-      confirmedLoggedOut.current = false
-      setLoggingIn(true)
-      const t = setTimeout(() => setLoggingIn(false), 2500)
+
+    if (!user) {
+      wasLoggedOut.current = true
+      setSplash(false)
+      return
+    }
+
+    if (wasLoggedOut.current) {
+      wasLoggedOut.current = false
+      splashAt.current = Date.now()
+      setSplash(true)
+      const t = setTimeout(() => setSplash(false), SPLASH_MS)
       return () => clearTimeout(t)
     }
+
+    const remaining = Math.max(0, SPLASH_MS - (Date.now() - splashAt.current))
+    setSplash(true)
+    const t = setTimeout(() => setSplash(false), remaining)
+    return () => clearTimeout(t)
   }, [isLoading, user])
 
-  if (isLoading) {
-    return (
-      <div className="auth-loading">
-        <div className="mark">
-          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
-            <path d="m3 7 9-4 9 4-9 4-9-4Z"/>
-            <path d="m3 7 9 4v10"/>
-            <path d="m21 7-9 4" opacity=".55"/>
-          </svg>
-        </div>
-      </div>
-    )
-  }
-
-  if (loggingIn) {
-    return (
-      <div className="auth-loader">
-        <div className="al-stage">
-          <div className="al-icon">
-            <MercantileMark height={51} />
-          </div>
-          <div className="al-nm">Mercantile</div>
-          <div className="al-bar"><span /></div>
-        </div>
-      </div>
-    )
+  if (isLoading || (user && splash)) {
+    return <BrandedLoader />
   }
 
   if (!user) return <LoginScreen />
