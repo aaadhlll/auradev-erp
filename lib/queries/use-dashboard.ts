@@ -13,6 +13,7 @@ import {
   mergeMetricsLive,
   type DashboardData,
   type DashboardFilters,
+  type DashboardMetricsData,
 } from '@/lib/dashboard-api'
 import { useAuth } from '@/lib/auth-context'
 import { queryKeys } from './keys'
@@ -76,7 +77,7 @@ export function useDashboardQuery(filters: DashboardFilters, active = true): Das
       try {
         const live = await fetchDashboardLive(filters)
         if (cancelled) return
-        qc.setQueryData(queryKeys.dashboardMetrics(filtersKey), old =>
+        qc.setQueryData<DashboardMetricsData>(queryKeys.dashboardMetrics(filtersKey), old =>
           old ? mergeMetricsLive(old, live) : old,
         )
       } catch {

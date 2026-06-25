@@ -6,6 +6,7 @@ export interface Product {
   sku: string
   barcode: string
   cat: string
+  categoryId?: string | null
   unit: 'kg' | 'pcs'
   mrp: number
   price: number

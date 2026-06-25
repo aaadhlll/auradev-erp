@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { Icon, Button, Badge, Avatar, Field, TextInput, Select, Segmented, Switch, Modal, Card, IconTile, useToast } from './ui'
-import { updateStoreProfile, uploadStoreLogo, resolveLogoUrl, updatePrinterSettings, updateBillingSettings } from '@/lib/settings-api'
+import { updateStoreProfile, uploadStoreLogo, resolveLogoUrl, updatePrinterSettings, updateBillingSettings, updateTaxSettings, type GstScheme } from '@/lib/settings-api'
 import {
   useStoreProfileQuery,
   useInvalidateStoreProfile,
@@ -10,7 +10,11 @@ import {
   useInvalidatePrinterSettings,
   useBillingSettingsQuery,
   useInvalidateBillingSettings,
+  useTaxSettingsQuery,
+  useInvalidateTaxSettings,
 } from '@/lib/queries/use-settings'
+import { useCategoriesQuery } from '@/lib/queries/use-catalog'
+import { GST_SCHEME_HINTS, GST_SCHEME_LABELS, GST_SCHEME_GUIDE, STANDARD_GST_RATES, gstRateSelectOptions, customGstRates, parseGstRateInput } from '@/lib/gst'
 import { formatRoleLabel, canAccessSettingsSection, canEditSettingsSection, type SettingsSectionId } from '@/lib/rbac'
 import { useAuditLogQuery } from '@/lib/queries/use-audit'
 import { formatAuditAction, formatAuditTime } from '@/lib/audit-api'
@@ -118,7 +122,7 @@ function StoreProfile() {
     <Card title="Store Profile" sub="Appears on every printed bill and customer-facing surface">
       {isLoading && <p className="muted">Loading profile…</p>}
       {error && <p className="muted" style={{ color: 'var(--danger)' }}>Could not load store profile.</p>}
-      <div style={{ display: 'flex', gap: 18, marginBottom: 18 }}>
+      <div className="store-profile-row" style={{ display: 'flex', gap: 18, marginBottom: 18 }}>
         <button
           type="button"
           onClick={() => canEdit && fileRef.current?.click()}
@@ -138,13 +142,13 @@ function StoreProfile() {
           )}
         </button>
         <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={e => void onLogoPick(e.target.files?.[0])} />
-        <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+        <div className="form-grid-2" style={{ flex: 1 }}>
           <div style={{ gridColumn: '1/-1' }}><Field label="Store name" required><TextInput value={f.name} onChange={set('name')} disabled={!canEdit} /></Field></div>
           <Field label="Phone"><TextInput value={f.phone} onChange={set('phone')} icon="phone" disabled={!canEdit} /></Field>
           <Field label="GSTIN"><TextInput value={f.gstin} onChange={set('gstin')} disabled={!canEdit} /></Field>
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      <div className="form-grid-2">
         <div style={{ gridColumn: '1/-1' }}>
           <Field label="Address">
             <div className="input" style={{ height: 'auto' }}>
@@ -394,7 +398,7 @@ function BillingSettings() {
     <Card title="Billing & POS" sub="Discount limits, credit sales, receipt content, and counter behaviour">
       {isLoading && <p className="muted">Loading billing settings…</p>}
       {error && <p className="muted" style={{ color: 'var(--danger)' }}>Could not load billing settings.</p>}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
+      <div className="form-grid-2" style={{ marginBottom: 16 }}>
         <Field label="Max line discount %" hint="Per product line on POS">
           <TextInput value={f.maxLineDiscountPercent} onChange={v => setF(s => ({ ...s, maxLineDiscountPercent: v }))} type="number" disabled={!canEdit} />
         </Field>
@@ -437,6 +441,255 @@ function BillingSettings() {
         })} saving={saving} />
       ) : (
         <p className="muted" style={{ marginTop: 8 }}>Read-only — contact a tenant admin to change billing rules.</p>
+      )}
+    </Card>
+  )
+}
+
+const RATE_OPTIONS = [...STANDARD_GST_RATES]
+
+function GstSchemeSettings() {
+  const toast = useToast()
+  const { user } = useAuth()
+  const canEdit = canEditSettingsSection(user, 'billing')
+  const { data: settings, isLoading, error } = useTaxSettingsQuery()
+  const categoriesQuery = useCategoriesQuery()
+  const categories = categoriesQuery.data ?? []
+  const invalidate = useInvalidateTaxSettings()
+  const [f, setF] = useState({
+    scheme: 'PRODUCT' as GstScheme,
+    priceIncludesTax: false,
+    enabledRates: [0, 5, 12, 18] as number[],
+    compositeRatePct: '5',
+    defaultCategoryRatePct: '5',
+    categoryRates: {} as Record<string, string>,
+  })
+  const [saving, setSaving] = useState(false)
+  const [customRateInput, setCustomRateInput] = useState('')
+
+  useEffect(() => {
+    if (!settings) return
+    const map: Record<string, string> = {}
+    for (const row of settings.categoryRates) {
+      map[row.categoryId] = String(row.ratePct)
+    }
+    setF({
+      scheme: settings.scheme,
+      priceIncludesTax: settings.priceIncludesTax,
+      enabledRates: settings.enabledRates.length ? settings.enabledRates : [0, 5, 12, 18],
+      compositeRatePct: String(settings.compositeRatePct),
+      defaultCategoryRatePct: String(settings.defaultCategoryRatePct),
+      categoryRates: map,
+    })
+  }, [settings])
+
+  function toggleRate(rate: number) {
+    if (!canEdit) return
+    setF(s => {
+      const on = s.enabledRates.includes(rate)
+      const next = on ? s.enabledRates.filter(r => r !== rate) : [...s.enabledRates, rate].sort((a, b) => a - b)
+      return { ...s, enabledRates: next.length ? next : [rate] }
+    })
+  }
+
+  function addCustomRate() {
+    if (!canEdit) return
+    const rate = parseGstRateInput(customRateInput)
+    if (rate == null) {
+      toast('Enter a GST rate between 0 and 100', { tone: 'danger' })
+      return
+    }
+    setF(s => ({
+      ...s,
+      enabledRates: [...new Set([...s.enabledRates, rate])].sort((a, b) => a - b),
+    }))
+    setCustomRateInput('')
+  }
+
+  function removeCustomRate(rate: number) {
+    if (!canEdit) return
+    setF(s => ({
+      ...s,
+      enabledRates: s.enabledRates.filter(r => r !== rate),
+    }))
+  }
+
+  async function save() {
+    if (!canEdit) return
+    setSaving(true)
+    try {
+      const categoryRates = categories
+        .map(c => ({
+          categoryId: c.id,
+          ratePct: Number(f.categoryRates[c.id] ?? f.defaultCategoryRatePct),
+        }))
+        .filter(r => !Number.isNaN(r.ratePct))
+      await updateTaxSettings({
+        scheme: f.scheme,
+        priceIncludesTax: f.priceIncludesTax,
+        enabledRates: f.enabledRates,
+        compositeRatePct: Number(f.compositeRatePct),
+        defaultCategoryRatePct: Number(f.defaultCategoryRatePct),
+        categoryRates,
+      })
+      invalidate()
+      toast('GST scheme saved')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not save GST settings', { tone: 'danger' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function resetForm() {
+    if (!settings) return
+    const map: Record<string, string> = {}
+    for (const row of settings.categoryRates) map[row.categoryId] = String(row.ratePct)
+    setF({
+      scheme: settings.scheme,
+      priceIncludesTax: settings.priceIncludesTax,
+      enabledRates: settings.enabledRates,
+      compositeRatePct: String(settings.compositeRatePct),
+      defaultCategoryRatePct: String(settings.defaultCategoryRatePct),
+      categoryRates: map,
+    })
+  }
+
+  return (
+    <Card title="GST billing scheme" sub="Choose how tax is calculated on POS bills and receipts">
+      {isLoading && <p className="muted">Loading GST settings…</p>}
+      {error && <p className="muted" style={{ color: 'var(--danger)' }}>Could not load GST settings.</p>}
+      <Field label="Billing scheme" hint={GST_SCHEME_HINTS[f.scheme]}>
+        <Segmented
+          value={f.scheme}
+          onChange={v => { if (canEdit) setF(s => ({ ...s, scheme: v as GstScheme })) }}
+          options={([
+            ['PRODUCT', 'Product'],
+            ['COMPOSITE', 'Composite'],
+            ['CATEGORY', 'Category'],
+          ] as const).map(([value, label]) => ({ value, label }))}
+        />
+      </Field>
+      <p className="muted" style={{ margin: '10px 0 16px', fontSize: 13 }}>
+        <b>{GST_SCHEME_LABELS[f.scheme]}</b> — {GST_SCHEME_HINTS[f.scheme]}
+      </p>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 18, padding: '12px 14px', background: 'var(--surface-2)', borderRadius: 'var(--r-md)', border: '1px solid var(--border)' }}>
+        {GST_SCHEME_GUIDE.map(g => (
+          <div key={g.title}>
+            <div style={{ fontWeight: 650, fontSize: 13 }}>{g.title}</div>
+            <div className="muted" style={{ fontSize: 12.5, marginTop: 2 }}>{g.body}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ marginBottom: 16 }}>
+        <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>Enabled GST rates</div>
+        <div className="chips" style={{ marginBottom: 10 }}>
+          {RATE_OPTIONS.map(rate => (
+            <button
+              key={rate}
+              type="button"
+              className={'chip' + (f.enabledRates.includes(rate) ? ' on' : '')}
+              onClick={() => toggleRate(rate)}
+              disabled={!canEdit}
+            >
+              {rate}%
+            </button>
+          ))}
+        </div>
+        {customGstRates(f.enabledRates).length > 0 && (
+          <div style={{ marginBottom: 10 }}>
+            <div className="muted" style={{ fontSize: 11.5, fontWeight: 600, marginBottom: 6, textTransform: 'uppercase', letterSpacing: '.04em' }}>Custom rates</div>
+            <div className="chips">
+              {customGstRates(f.enabledRates).map(rate => (
+                <button
+                  key={rate}
+                  type="button"
+                  className="chip on"
+                  onClick={() => removeCustomRate(rate)}
+                  disabled={!canEdit}
+                  title={canEdit ? 'Click to remove' : undefined}
+                >
+                  {rate}%{canEdit ? ' ×' : ''}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {canEdit && (
+          <div className="row gap8" style={{ flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <Field label="Add custom rate %" hint="e.g. 1, 3, 28 — used in products & category mapping" optional>
+              <TextInput
+                value={customRateInput}
+                onChange={setCustomRateInput}
+                type="number"
+                placeholder="28"
+                onKeyDown={(e: React.KeyboardEvent<HTMLInputElement>) => { if (e.key === 'Enter') { e.preventDefault(); addCustomRate() } }}
+              />
+            </Field>
+            <Button size="sm" variant="outline" icon="plus" onClick={addCustomRate}>Add</Button>
+          </div>
+        )}
+      </div>
+      {f.scheme === 'COMPOSITE' && (
+        <div className="form-grid-2" style={{ marginBottom: 16 }}>
+          <Field label="Composite GST %" hint="Single rate applied on the bill total">
+            <Select
+              value={f.compositeRatePct}
+              onChange={v => setF(s => ({ ...s, compositeRatePct: v }))}
+              options={gstRateSelectOptions(f.enabledRates, f.compositeRatePct)}
+              disabled={!canEdit}
+            />
+          </Field>
+        </div>
+      )}
+      {f.scheme === 'CATEGORY' && (
+        <div style={{ marginBottom: 16 }}>
+          <div className="form-grid-2" style={{ marginBottom: 12 }}>
+            <Field label="Default category rate %" hint="Used when a category has no mapping">
+              <Select
+                value={f.defaultCategoryRatePct}
+                onChange={v => setF(s => ({ ...s, defaultCategoryRatePct: v }))}
+                options={gstRateSelectOptions(f.enabledRates, f.defaultCategoryRatePct)}
+                disabled={!canEdit}
+              />
+            </Field>
+          </div>
+          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>Category GST mapping</div>
+          {categoriesQuery.isPending && <p className="muted">Loading categories…</p>}
+          {!categoriesQuery.isPending && categories.length === 0 && (
+            <p className="muted">No categories found — import products or add categories first.</p>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {categories.map(c => (
+              <div key={c.id} className="row gap10" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 600, fontSize: 13.5, minWidth: 120 }}>{c.name}</span>
+                <Select
+                  width={120}
+                  size="sm"
+                  value={f.categoryRates[c.id] ?? f.defaultCategoryRatePct}
+                  onChange={v => setF(s => ({
+                    ...s,
+                    categoryRates: { ...s.categoryRates, [c.id]: v },
+                  }))}
+                  options={gstRateSelectOptions(f.enabledRates, f.categoryRates[c.id] ?? f.defaultCategoryRatePct)}
+                  disabled={!canEdit}
+                />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      <div className="row" style={{ justifyContent: 'space-between', padding: '11px 4px', borderTop: '1px solid var(--border)', marginBottom: 8 }}>
+        <div>
+          <div style={{ fontWeight: 600, fontSize: 13.5 }}>Prices include GST</div>
+          <div className="td-sub">Selling prices are tax-inclusive (MRP style)</div>
+        </div>
+        <Switch checked={f.priceIncludesTax} onChange={v => setF(s => ({ ...s, priceIncludesTax: v }))} disabled={!canEdit} />
+      </div>
+      {canEdit ? (
+        <SaveBar onSave={() => void save()} onReset={resetForm} saving={saving} />
+      ) : (
+        <p className="muted" style={{ marginTop: 8 }}>Read-only — contact a tenant admin to change GST rules.</p>
       )}
     </Card>
   )
@@ -578,7 +831,7 @@ export function Settings() {
           {profile?.tenantId ? <> · Tenant <span className="mono">{profile.tenantId.slice(0, 8)}</span></> : null}
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '212px 1fr', gap: 24, alignItems: 'start' }}>
+      <div className="settings-layout">
         <div className="settings-nav">
           {visibleNav.map(s => (
             <button key={s.id} className={'sb-nav' + (sec === s.id ? ' active' : '')} onClick={() => setSec(s.id)} style={{ marginBottom: 2 }}>
@@ -588,7 +841,14 @@ export function Settings() {
         </div>
         <div>
           {sec === 'store' && canAccessSettingsSection(user, 'store') && <StoreProfile />}
-          {sec === 'billing' && canAccessSettingsSection(user, 'billing') && <BillingSettings />}
+          {sec === 'billing' && canAccessSettingsSection(user, 'billing') && (
+            <>
+              <BillingSettings />
+              <div style={{ marginTop: 16 }}>
+                <GstSchemeSettings />
+              </div>
+            </>
+          )}
           {sec === 'printer' && canAccessSettingsSection(user, 'printer') && <PrinterSettings />}
           {sec === 'users' && canAccessSettingsSection(user, 'users') && <UserManagement />}
           {sec === 'audit' && canAccessSettingsSection(user, 'audit') && <AuditLog />}

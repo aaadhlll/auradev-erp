@@ -1,4 +1,5 @@
 import type { SavedBill } from './billing-api'
+import { gstSchemeShortLabel, isBillLevelGstScheme } from './gst'
 
 export interface ReceiptMeta {
   storeName?: string
@@ -55,13 +56,19 @@ function receiptLines(bill: SavedBill, meta: ReceiptMeta, options: ReceiptPrintO
     '--------------------------------',
     `Bill  ${bill.billNo}`,
     formatDate(bill.createdAt),
+    `GST scheme: ${gstSchemeShortLabel(bill.gstScheme)}`,
   )
   if (options.showCustomer !== false) lines.push(`Customer: ${bill.customerName}`)
   if (options.showCashier !== false) lines.push(`Cashier: ${bill.cashierName}`)
   lines.push('--------------------------------')
+  const billLevelGst = isBillLevelGstScheme(bill.gstScheme)
   for (const line of bill.lines) {
     lines.push(line.name)
-    lines.push(`  ${line.quantity} ${line.unitLabel} x ${money(line.unitPrice)}  ${money(line.lineTotal)}`)
+    if (billLevelGst) {
+      lines.push(`  ${line.quantity} ${line.unitLabel} x ${money(line.unitPrice)}  ${money(line.lineTotal)}`)
+    } else {
+      lines.push(`  ${line.quantity} ${line.unitLabel} x ${money(line.unitPrice)} @${line.gstRate}%  ${money(line.lineTotal)}`)
+    }
   }
   lines.push('--------------------------------')
   lines.push(`Subtotal${' '.repeat(18)}${money(bill.subtotal)}`)
@@ -69,6 +76,14 @@ function receiptLines(bill: SavedBill, meta: ReceiptMeta, options: ReceiptPrintO
     lines.push(`Discount${' '.repeat(18)}-${money(bill.billDiscount)}`)
   }
   if (options.showGstBreakup !== false) {
+    if (bill.gstSlabs.length > 0) {
+      for (const slab of bill.gstSlabs) {
+        const label = billLevelGst
+          ? `Composite ${slab.ratePct}%`
+          : `GST ${slab.ratePct}%`
+        lines.push(`${label}${' '.repeat(Math.max(1, 20 - label.length))}${money(slab.taxAmount)}`)
+      }
+    }
     lines.push(`CGST${' '.repeat(20)}${money(bill.cgstTotal)}`)
     lines.push(`SGST${' '.repeat(20)}${money(bill.sgstTotal)}`)
   } else if (bill.cgstTotal + bill.sgstTotal > 0) {

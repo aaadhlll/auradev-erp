@@ -59,6 +59,7 @@ function mapProduct(p: ApiProduct): Product {
     sku: p.sku,
     barcode: p.barcode ?? '—',
     cat: p.categoryName ?? 'Uncategorised',
+    categoryId: p.categoryId,
     unit: mapUnit(p.unitType, p.unitLabel),
     mrp: Number(p.priceMrp),
     price: Number(p.priceSelling),

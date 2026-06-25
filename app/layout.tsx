@@ -1,4 +1,4 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import { Inter, JetBrains_Mono, Comfortaa } from 'next/font/google'
 import { AuthProvider } from '@/lib/auth-context'
 import { QueryProvider } from '@/lib/query-provider'
@@ -25,6 +25,11 @@ const comfortaa = Comfortaa({
 export const metadata: Metadata = {
   title: 'Mercantile',
   description: 'Mercantile — Retail & Wholesale SaaS · Nenjankod Supermarket',
+}
+
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
 }
 
 export default function RootLayout({

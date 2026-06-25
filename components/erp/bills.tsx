@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { Icon, Button, Badge, Card, TextInput } from './ui'
+import { Button, Badge, Card, TextInput, ContentLoader } from './ui'
 import { money } from '@/lib/erp-data'
 import type { BillSummary } from '@/lib/billing-api'
 import { useBillQuery, useBillsQuery } from '@/lib/queries/use-bills'
@@ -56,6 +56,7 @@ export function Bills({
   const rows = billsQuery.data?.items ?? []
   const totalPages = billsQuery.data?.totalPages ?? 1
   const total = billsQuery.data?.totalElements ?? rows.length
+  const initialLoading = billsQuery.isLoading && rows.length === 0
 
   const openBill = (row: BillSummary) => setSelectedId(row.id)
 
@@ -77,7 +78,10 @@ export function Bills({
         </div>
       </div>
 
-      <Card title="Bill history" sub={`${total} completed bill${total === 1 ? '' : 's'}`} noBody>
+      <Card title="Bill history" sub={initialLoading ? 'Loading…' : `${total} completed bill${total === 1 ? '' : 's'}`} noBody>
+        {initialLoading ? (
+          <ContentLoader label="Loading bills…" />
+        ) : (
         <div className="tbl-wrap">
           <table className="tbl tbl-clickable">
             <thead>
@@ -92,13 +96,7 @@ export function Bills({
               </tr>
             </thead>
             <tbody>
-              {billsQuery.isLoading && rows.length === 0 ? (
-                <tr>
-                  <td colSpan={7} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--fg-subtle)' }}>
-                    <Icon name="loader" size={20} />
-                  </td>
-                </tr>
-              ) : billsQuery.error ? (
+              {billsQuery.error ? (
                 <tr>
                   <td colSpan={7} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--danger-fg)' }}>
                     {billsQuery.error.message}
@@ -124,8 +122,9 @@ export function Bills({
             </tbody>
           </table>
         </div>
+        )}
 
-        {totalPages > 1 && (
+        {!initialLoading && totalPages > 1 && (
           <div className="filter-toolbar-foot" style={{ justifyContent: 'space-between' }}>
             <span className="muted" style={{ fontSize: 12.5 }}>Page {page + 1} of {totalPages}</span>
             <div className="row gap8">

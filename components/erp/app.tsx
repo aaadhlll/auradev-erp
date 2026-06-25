@@ -24,6 +24,7 @@ function AppInner() {
   const { theme, toggleTheme } = useTheme()
   const [view, setView] = useState<ViewId>('dashboard')
   const [collapsed, setCollapsed] = useState(false)
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [prefill, setPrefill] = useState<{ view: ViewId; q: string; key: number } | null>(null)
   const [openBillId, setOpenBillId] = useState<string | null>(null)
@@ -45,6 +46,24 @@ function AppInner() {
   }, [view])
 
   useEffect(() => {
+    setMobileNavOpen(false)
+  }, [view])
+
+  useEffect(() => {
+    const mq = window.matchMedia('(min-width: 901px)')
+    const onChange = () => {
+      if (mq.matches) setMobileNavOpen(false)
+    }
+    mq.addEventListener('change', onChange)
+    return () => mq.removeEventListener('change', onChange)
+  }, [])
+
+  useEffect(() => {
+    document.body.classList.toggle('nav-open', mobileNavOpen)
+    return () => document.body.classList.remove('nav-open')
+  }, [mobileNavOpen])
+
+  useEffect(() => {
     if (user && !canAccessView(user, view)) {
       setView(firstAccessibleView(user))
     }
@@ -63,7 +82,21 @@ function AppInner() {
 
   return (
     <div className="app">
-      <Sidebar view={view} setView={setView} collapsed={collapsed} />
+      {mobileNavOpen && (
+        <button
+          type="button"
+          className="sidebar-backdrop"
+          aria-label="Close navigation"
+          onClick={() => setMobileNavOpen(false)}
+        />
+      )}
+      <Sidebar
+        view={view}
+        setView={setView}
+        collapsed={collapsed}
+        mobileOpen={mobileNavOpen}
+        onNavigate={() => setMobileNavOpen(false)}
+      />
       <div className="main">
         <Topbar
           view={view}
@@ -71,6 +104,7 @@ function AppInner() {
           onToggleTheme={toggleTheme}
           collapsed={collapsed}
           setCollapsed={setCollapsed}
+          onMobileNav={() => setMobileNavOpen(o => !o)}
           onCmd={() => setSearchOpen(true)}
         />
         <GlobalSearch

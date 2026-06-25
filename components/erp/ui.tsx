@@ -88,14 +88,16 @@ export function Checkbox({ checked, onChange }: { checked: boolean; onChange?: (
 
 // ---- Switch --------------------------------------------------------------
 
-export function Switch({ checked, onChange }: { checked: boolean; onChange?: (v: boolean) => void }) {
+export function Switch({ checked, onChange, disabled = false }: { checked: boolean; onChange?: (v: boolean) => void; disabled?: boolean }) {
   return (
     <button
       type="button"
       role="switch"
       aria-checked={checked}
-      className={'switch' + (checked ? ' on' : '')}
-      onClick={() => onChange?.(!checked)}
+      aria-disabled={disabled}
+      disabled={disabled}
+      className={'switch' + (checked ? ' on' : '') + (disabled ? ' disabled' : '')}
+      onClick={() => !disabled && onChange?.(!checked)}
     />
   )
 }
@@ -198,11 +200,11 @@ function MItem({ it, value, onChange, setOpen }: {
 
 export function Select({
   value, onChange, options, placeholder = 'Select…', size: sz, icon,
-  width, align = 'left',
+  width, align = 'left', disabled = false,
 }: {
   value: string; onChange?: (v: string) => void; options: (SelectOption | SelectGroup)[];
   placeholder?: string; size?: string; icon?: string; width?: number | string;
-  align?: 'left' | 'right'
+  align?: 'left' | 'right'; disabled?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const wrap = useRef<HTMLDivElement>(null)
@@ -216,11 +218,12 @@ export function Select({
   const sel = flat.find(o => o.value === value)
 
   return (
-    <div ref={wrap} style={{ position: 'relative', width: width ?? '100%' }}>
+    <div ref={wrap} style={{ position: 'relative', width: width ?? '100%', opacity: disabled ? 0.6 : 1, pointerEvents: disabled ? 'none' : undefined }}>
       <div
         className={'select-trigger' + (sz === 'sm' ? ' sm' : '') + (open ? ' open' : '')}
-        onClick={() => setOpen(v => !v)}
-        tabIndex={0}
+        onClick={() => !disabled && setOpen(v => !v)}
+        tabIndex={disabled ? -1 : 0}
+        aria-disabled={disabled}
       >
         {(icon || (sel?.icon)) && <Icon name={icon ?? sel!.icon!} size={sz === 'sm' ? 14 : 16} style={{ color: 'var(--fg-muted)' }} />}
         <span className={'val' + (sel ? '' : ' ph')}>{sel ? sel.label : placeholder}</span>
@@ -449,3 +452,5 @@ export function Card({
     </div>
   )
 }
+
+export { ContentLoader } from './branded-loader'

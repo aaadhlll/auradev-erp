@@ -11,6 +11,7 @@
     "generate:stock-sample": "node scripts/generate-stock-adjustment-sample.mjs"
   },
   "dependencies": {
+    "@swc/helpers": "0.5.15",
     "@tanstack/react-query": "^5.101.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.17.0",

@@ -1,7 +1,6 @@
 import { apiFetch } from './api'
 import { getAccessToken, getRefreshToken, clearTokens, ApiError } from './api'
-
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
+import { getApiBaseUrl } from './api-base'
 
 export interface StoreProfile {
   tenantId: string
@@ -41,10 +40,10 @@ async function authFetch(path: string, init: RequestInit = {}): Promise<Response
   const headers = new Headers(init.headers)
   if (token) headers.set('Authorization', `Bearer ${token}`)
 
-  let res = await fetch(`${BASE}${path}`, { ...init, headers })
+  let res = await fetch(`${getApiBaseUrl()}${path}`, { ...init, headers })
 
   if (res.status === 401 && getRefreshToken()) {
-    const refreshRes = await fetch(`${BASE}/api/v1/auth/refresh`, {
+    const refreshRes = await fetch(`${getApiBaseUrl()}/api/v1/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: getRefreshToken() }),
@@ -54,7 +53,7 @@ async function authFetch(path: string, init: RequestInit = {}): Promise<Response
       localStorage.setItem('erp_access_token', data.accessToken)
       localStorage.setItem('erp_refresh_token', data.refreshToken)
       headers.set('Authorization', `Bearer ${data.accessToken}`)
-      res = await fetch(`${BASE}${path}`, { ...init, headers })
+      res = await fetch(`${getApiBaseUrl()}${path}`, { ...init, headers })
     } else {
       clearTokens()
       throw new ApiError(401, 'Session expired')
@@ -90,7 +89,7 @@ export function storeProfileToReceiptMeta(profile: StoreProfile | null | undefin
 export function resolveLogoUrl(logoUrl: string | null | undefined): string | undefined {
   if (!logoUrl) return undefined
   if (logoUrl.startsWith('http://') || logoUrl.startsWith('https://')) return logoUrl
-  const base = BASE.replace(/\/$/, '')
+  const base = getApiBaseUrl().replace(/\/$/, '')
   return logoUrl.startsWith('/') ? `${base}${logoUrl}` : `${base}/${logoUrl}`
 }
 
@@ -112,6 +111,36 @@ export async function fetchBillingSettings(): Promise<BillingSettings> {
 
 export async function updateBillingSettings(payload: Partial<BillingSettings>): Promise<BillingSettings> {
   return apiFetch<BillingSettings>('/api/v1/settings/billing', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  })
+}
+
+export type GstScheme = 'PRODUCT' | 'COMPOSITE' | 'CATEGORY'
+
+export interface CategoryGstRate {
+  categoryId: string
+  categoryName: string
+  ratePct: number
+}
+
+export interface TaxSettings {
+  scheme: GstScheme
+  priceIncludesTax: boolean
+  enabledRates: number[]
+  compositeRatePct: number
+  defaultCategoryRatePct: number
+  categoryRates: CategoryGstRate[]
+}
+
+export async function fetchTaxSettings(): Promise<TaxSettings> {
+  return apiFetch<TaxSettings>('/api/v1/settings/tax')
+}
+
+export async function updateTaxSettings(payload: Omit<Partial<TaxSettings>, 'categoryRates'> & {
+  categoryRates?: { categoryId: string; ratePct: number }[]
+}): Promise<TaxSettings> {
+  return apiFetch<TaxSettings>('/api/v1/settings/tax', {
     method: 'PUT',
     body: JSON.stringify(payload),
   })

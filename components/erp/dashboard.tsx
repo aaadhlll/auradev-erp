@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Icon, Button, Badge, KpiCard, Card, IconTile, Select, TextInput,
+  Icon, Button, Badge, KpiCard, Card, IconTile, Select, TextInput, ContentLoader,
 } from './ui'
 import { money } from '@/lib/erp-data'
 import {
@@ -686,8 +686,8 @@ export function Dashboard({
     return (
       <div className="content-pad" style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 1480, margin: '0 auto' }}>
         <DashboardFiltersBar filters={filters} onChange={setFilters} />
+        {error ? (
         <div className="empty" style={{ padding: '80px 0' }}>
-          {error ? (
             <>
               <div className="ei"><Icon name="alert-circle" size={22} /></div>
               <div style={{ fontWeight: 600, color: 'var(--danger-fg)', marginBottom: 8 }}>{error}</div>
@@ -696,19 +696,18 @@ export function Dashboard({
               </div>
               <Button size="sm" variant="outline" icon="refresh-cw" onClick={() => void refetch()}>Retry</Button>
             </>
-          ) : waitingForCustom ? (
+        </div>
+        ) : waitingForCustom ? (
+        <div className="empty" style={{ padding: '80px 0' }}>
             <>
               <Icon name="calendar" size={24} />
               <div style={{ marginTop: 12, fontWeight: 600 }}>Select a custom date range</div>
               <div className="muted" style={{ fontSize: 13, marginTop: 6 }}>Choose both start and end dates above.</div>
             </>
-          ) : (
-            <>
-              <Icon name="loader-2" size={24} />
-              <div style={{ marginTop: 12, fontWeight: 600 }}>Loading dashboard…</div>
-            </>
-          )}
         </div>
+        ) : (
+          <ContentLoader label="Loading dashboard…" />
+        )}
       </div>
     )
   }
@@ -843,7 +842,7 @@ export function Dashboard({
         />
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.55fr 1fr', gap: 16 }}>
+      <div className="stack-below-900">
         <Card
           title="Sales trend"
           sub={`${periodLabel} · ${compareLabel}`}
@@ -856,7 +855,7 @@ export function Dashboard({
       </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.55fr 1fr', gap: 16, alignItems: 'start' }}>
+      <div className="stack-below-900">
         <div className={metricsFetching ? 'dash-metrics-dim' : undefined}>
         <Card
           title="Recent bills"

@@ -5,9 +5,11 @@ import {
   fetchStoreProfile,
   fetchPrinterSettings,
   fetchBillingSettings,
+  fetchTaxSettings,
   storeProfileToReceiptMeta,
   type PrinterSettings,
   type BillingSettings,
+  type TaxSettings,
 } from '@/lib/settings-api'
 import { useAuth } from '@/lib/auth-context'
 import {
@@ -44,6 +46,17 @@ export function useBillingSettingsQuery() {
     queryFn: fetchBillingSettings,
     enabled: Boolean(user),
     staleTime: 5 * 60_000,
+  })
+}
+
+export function useTaxSettingsQuery() {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['tax-settings'],
+    queryFn: fetchTaxSettings,
+    enabled: Boolean(user),
+    staleTime: 60_000,
+    refetchOnWindowFocus: true,
   })
 }
 
@@ -105,4 +118,9 @@ export function useInvalidatePrinterSettings() {
 export function useInvalidateBillingSettings() {
   const qc = useQueryClient()
   return () => void qc.invalidateQueries({ queryKey: ['billing-settings'] })
+}
+
+export function useInvalidateTaxSettings() {
+  const qc = useQueryClient()
+  return () => void qc.invalidateQueries({ queryKey: ['tax-settings'] })
 }

@@ -1,6 +1,5 @@
 import { getAccessToken, getRefreshToken, clearTokens, ApiError } from './api'
-
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
+import { getApiBaseUrl } from './api-base'
 
 export interface ImportRowIssue {
   row: number
@@ -23,10 +22,10 @@ async function authFetch(path: string, init: RequestInit = {}): Promise<Response
   const headers = new Headers(init.headers)
   if (token) headers.set('Authorization', `Bearer ${token}`)
 
-  let res = await fetch(`${BASE}${path}`, { ...init, headers })
+  let res = await fetch(`${getApiBaseUrl()}${path}`, { ...init, headers })
 
   if (res.status === 401 && getRefreshToken()) {
-    const refreshRes = await fetch(`${BASE}/api/v1/auth/refresh`, {
+    const refreshRes = await fetch(`${getApiBaseUrl()}/api/v1/auth/refresh`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ refreshToken: getRefreshToken() }),
@@ -36,7 +35,7 @@ async function authFetch(path: string, init: RequestInit = {}): Promise<Response
       localStorage.setItem('erp_access_token', data.accessToken)
       localStorage.setItem('erp_refresh_token', data.refreshToken)
       headers.set('Authorization', `Bearer ${data.accessToken}`)
-      res = await fetch(`${BASE}${path}`, { ...init, headers })
+      res = await fetch(`${getApiBaseUrl()}${path}`, { ...init, headers })
     } else {
       clearTokens()
       throw new ApiError(401, 'Session expired')

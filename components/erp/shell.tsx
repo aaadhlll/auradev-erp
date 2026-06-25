@@ -36,11 +36,13 @@ const VIEW_META: Record<ViewId, { title: string; crumb: string }> = {
 }
 
 export function Sidebar({
-  view, setView, collapsed,
+  view, setView, collapsed, mobileOpen, onNavigate,
 }: {
   view: ViewId
   setView: (v: ViewId) => void
   collapsed: boolean
+  mobileOpen?: boolean
+  onNavigate?: () => void
 }) {
   const { user, logout } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
@@ -52,10 +54,16 @@ export function Sidebar({
   function pickView(next: ViewId) {
     setView(next)
     setMenuOpen(false)
+    onNavigate?.()
+  }
+
+  function navTo(next: ViewId) {
+    setView(next)
+    onNavigate?.()
   }
 
   return (
-    <aside className={'sidebar' + (collapsed ? ' collapsed' : '')}>
+    <aside className={'sidebar' + (collapsed ? ' collapsed' : '') + (mobileOpen ? ' mobile-open' : '')}>
       <div className="sb-brand">
         <div className="sb-logo">
           <MercantileMark height={16} />
@@ -77,7 +85,7 @@ export function Sidebar({
                 key={it.id}
                 className={'sb-nav' + (view === it.id ? ' active' : '')}
                 data-tip={it.label}
-                onClick={() => setView(it.id)}
+                onClick={() => navTo(it.id)}
               >
                 <Icon name={it.icon} size={18} className="ic" />
                 <span className="sb-txt">{it.label}</span>
@@ -147,19 +155,23 @@ export function Sidebar({
 import type { Theme } from '@/lib/theme'
 
 export function Topbar({
-  view, theme, onToggleTheme, collapsed, setCollapsed, onCmd,
+  view, theme, onToggleTheme, collapsed, setCollapsed, onMobileNav, onCmd,
 }: {
   view: ViewId
   theme: Theme
   onToggleTheme: () => void
   collapsed: boolean
   setCollapsed: (fn: (c: boolean) => boolean) => void
+  onMobileNav?: () => void
   onCmd: () => void
 }) {
   const meta = VIEW_META[view] ?? { title: '', crumb: '' }
   return (
     <header className="topbar">
-      <button className="icon-btn" onClick={() => setCollapsed(c => !c)} aria-label="Toggle sidebar">
+      <button type="button" className="icon-btn mobile-only" onClick={onMobileNav} aria-label="Open navigation">
+        <Icon name="menu" size={18} />
+      </button>
+      <button type="button" className="icon-btn desktop-only" onClick={() => setCollapsed(c => !c)} aria-label="Toggle sidebar">
         <Icon name={collapsed ? 'panel-left-open' : 'panel-left-close'} size={18} />
       </button>
       <div className="tb-title">

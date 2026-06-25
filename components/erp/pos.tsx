@@ -15,7 +15,9 @@ import {
   type HeldBillSummary,
 } from '@/lib/billing-api'
 import { saveReceiptPng, saveReceiptPdf, printReceipt, type ReceiptMeta, type ReceiptPrintOptions } from '@/lib/receipt-export'
-import { useReceiptMeta, usePrinterSettingsQuery, useBillingSettingsQuery, useReceiptPrintOptions, mergePrintOptions } from '@/lib/queries/use-settings'
+import { useReceiptMeta, usePrinterSettingsQuery, useBillingSettingsQuery, useTaxSettingsQuery, useReceiptPrintOptions, mergePrintOptions } from '@/lib/queries/use-settings'
+import { effectiveTaxSettings, resolveLineGstRate, cartGstTotal, gstSchemeShortLabel, isBillLevelGstScheme, type GstScheme } from '@/lib/gst'
+import { canEditSettingsSection } from '@/lib/rbac'
 import { useAuth } from '@/lib/auth-context'
 import { canHoldBill } from '@/lib/rbac'
 import { useInvalidateCatalog } from '@/lib/queries/use-catalog'
@@ -23,6 +25,7 @@ import { useCustomersQuery } from '@/lib/queries/use-customers'
 import { useInvalidateDashboard } from '@/lib/queries/use-dashboard'
 import { usePosSearchQuery } from '@/lib/queries/use-pos-search'
 import { usePosQuickPicksQuery, useInvalidatePos } from '@/lib/queries/use-pos-quick-picks'
+import { ConfirmDeleteModal } from './confirm-delete-modal'
 import { useHeldBillsQuery, useInvalidateHeldBills } from '@/lib/queries/use-held-bills'
 import { mergeQuickPicks, pushPosRecent, readPosRecents } from '@/lib/pos-recent'
 
@@ -296,13 +299,26 @@ export function POS({
   const receiptMeta = useReceiptMeta()
   const printerQuery = usePrinterSettingsQuery()
   const billingQuery = useBillingSettingsQuery()
+  const taxQuery = useTaxSettingsQuery()
   const printOptions = useReceiptPrintOptions()
   const billing = billingQuery.data
+  const taxSettings = taxQuery.data
+  const [schemeOverride, setSchemeOverride] = useState<GstScheme | null>(null)
+  const canEditGst = canEditSettingsSection(user, 'billing')
+  const effectiveTax = useMemo(
+    () => effectiveTaxSettings(taxSettings, schemeOverride),
+    [taxSettings, schemeOverride],
+  )
+
+  useEffect(() => {
+    setSchemeOverride(null)
+  }, [taxSettings?.scheme])
   const allowHold = canHoldBill(user) && billing?.allowHoldBill !== false
   const maxBillDisc = user?.role === 'CASHIER'
     ? (billing?.cashierMaxBillDiscountPercent ?? 5)
     : (billing?.maxBillDiscountPercent ?? 15)
   const scannerRef = useRef<HTMLInputElement>(null)
+  const discountRef = useRef<HTMLInputElement>(null)
   const invalidateCatalog = useInvalidateCatalog()
   const invalidateDashboard = useInvalidateDashboard()
   const invalidatePos = useInvalidatePos()
@@ -329,6 +345,9 @@ export function POS({
   const [payBusy, setPayBusy] = useState(false)
   const [savedBill, setSavedBill] = useState<SavedBill | null>(null)
   const [recents, setRecents] = useState<Product[]>([])
+  const [scannerLock, setScannerLock] = useState(true)
+  const [discardId, setDiscardId] = useState<string | null>(null)
+  const [clearCartOpen, setClearCartOpen] = useState(false)
 
   const searchQuery = usePosSearchQuery(debouncedQ)
   const isSearching = debouncedQ.length >= 2
@@ -350,7 +369,16 @@ export function POS({
     })
   }, [])
 
-  const scannerReady = active && !payOpen && !savedBill
+  const engageScanner = useCallback(() => {
+    setScannerLock(true)
+    focusScanner()
+  }, [focusScanner])
+
+  const releaseScanner = useCallback(() => {
+    setScannerLock(false)
+  }, [])
+
+  const scannerReady = active && !payOpen && !savedBill && scannerLock
 
   useEffect(() => {
     if (scannerReady) focusScanner()
@@ -359,6 +387,12 @@ export function POS({
   useEffect(() => {
     if (scannerReady && !scanBusy) focusScanner()
   }, [scanBusy, scannerReady, focusScanner])
+
+  useEffect(() => {
+    if (active && !payOpen && !savedBill) {
+      setScannerLock(true)
+    }
+  }, [active, payOpen, savedBill])
 
   function refetch() {
     void customersQuery.refetch()
@@ -443,15 +477,28 @@ export function POS({
   }
 
   const subtotal = cart.reduce((s, x) => s + x.p.price * x.qty, 0)
-  const gst = cart.reduce((s, x) => s + x.p.price * x.qty * x.p.tax / 100, 0)
+  const lineNet = cart.reduce((s, x) => s + x.p.price * x.qty - (x.disc || 0), 0)
   const discVal = discMode === '%' ? subtotal * (billDisc || 0) / 100 : (billDisc || 0)
-  const grand = Math.max(0, subtotal - discVal + gst)
+  const gstLines = cart.map(x => ({
+    gross: x.p.price * x.qty,
+    discount: x.disc || 0,
+    ratePct: resolveLineGstRate(x.p, effectiveTax) ?? 0,
+  }))
+  const gst = cartGstTotal(effectiveTax ?? null, gstLines, discVal)
+  const priceInclGst = effectiveTax?.priceIncludesTax ?? false
+  const compositeRate = effectiveTax?.scheme === 'COMPOSITE' ? effectiveTax.compositeRatePct : null
+  const isComposite = effectiveTax?.scheme === 'COMPOSITE'
+  const taxableBase = Math.max(0, lineNet - discVal)
+  const grand = isComposite
+    ? (priceInclGst ? taxableBase : taxableBase + gst)
+    : (priceInclGst ? Math.max(0, subtotal - discVal) : Math.max(0, subtotal - discVal + gst))
 
   function cartPayload() {
     return {
       customerId,
       discountMode: (discMode === '%' ? 'PERCENT' : 'AMOUNT') as 'AMOUNT' | 'PERCENT',
       billDiscount: billDisc || 0,
+      gstSchemeOverride: schemeOverride ?? undefined,
       items: cart.map(x => ({
         productId: x.p.id,
         quantity: x.qty,
@@ -579,7 +626,7 @@ export function POS({
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'F8' && cart.length) { e.preventDefault(); setPayOpen(true) }
-      if (e.key === 'F2') { e.preventDefault(); clearBill() }
+      if (e.key === 'F2' && cart.length) { e.preventDefault(); setClearCartOpen(true) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
@@ -592,7 +639,17 @@ export function POS({
   const panelError = isSearching ? searchQuery.error?.message : picksError ?? customersError
 
   const cartPanel = (
-    <div className="pos-cart" style={{ order: cartFirst ? 0 : 2 }}>
+    <div
+      className="pos-cart"
+      style={{ order: cartFirst ? 0 : 2 }}
+      onMouseDown={e => {
+        const t = e.target as HTMLElement
+        if (t.closest('button')) return
+        if (t.closest('.pos-discount-row') || t.closest('.pos-lines') || t.closest('.pos-cart-head')) {
+          releaseScanner()
+        }
+      }}
+    >
       <div className="pos-cart-head">
         <Select
           width="100%"
@@ -620,11 +677,16 @@ export function POS({
             <div style={{ fontWeight: 600, color: 'var(--fg)' }}>Cart is empty</div>
             <div>Scan a barcode or search to add items</div>
           </div>
-        ) : cart.map(x => (
+        ) : cart.map(x => {
+          const lineRate = resolveLineGstRate(x.p, effectiveTax)
+          return (
           <div className="cart-line" key={x.p.id}>
             <div style={{ flex: 1, minWidth: 0 }}>
               <div className="cl-name">{x.p.name}</div>
-              <div className="cl-meta tnum">{money(x.p.price)} × {x.qty}{x.p.unit === 'kg' ? ' kg' : ''} · GST {x.p.tax}%</div>
+              <div className="cl-meta tnum">
+                {money(x.p.price)} × {x.qty}{x.p.unit === 'kg' ? ' kg' : ''}
+                {lineRate != null ? ` · GST ${lineRate}%` : ''}
+              </div>
             </div>
             <div className="qty">
               <button onClick={() => setQty(x.p.id, x.qty - (x.p.unit === 'kg' ? 0.5 : 1))}><Icon name="minus" size={13} /></button>
@@ -634,7 +696,8 @@ export function POS({
             <div className="cl-total tnum">{money(x.p.price * x.qty)}</div>
             <button className="cl-rm" onClick={() => remove(x.p.id)} aria-label="Remove"><Icon name="x" size={14} /></button>
           </div>
-        ))}
+          )
+        })}
       </div>
       <div className="pos-totals">
         <div className="pos-discount-row">
@@ -646,13 +709,26 @@ export function POS({
               ))}
             </div>
             <div className="input sm" style={{ width: 84 }}>
-              <input type="number" value={billDisc || ''} placeholder="0" onChange={e => setBillDisc(parseFloat(e.target.value) || 0)} />
+              <input
+                ref={discountRef}
+                className="pos-discount-input"
+                type="number"
+                value={billDisc || ''}
+                placeholder="0"
+                onFocus={releaseScanner}
+                onChange={e => setBillDisc(parseFloat(e.target.value) || 0)}
+              />
             </div>
           </div>
         </div>
         <div className="t-row"><span className="muted">Subtotal</span><span className="tnum">{money2(subtotal)}</span></div>
         {discVal > 0 && <div className="t-row"><span className="muted">Discount</span><span className="tnum" style={{ color: 'var(--success-fg)' }}>−{money2(discVal)}</span></div>}
-        <div className="t-row"><span className="muted">GST</span><span className="tnum">{money2(gst)}</span></div>
+        <div className="t-row">
+          <span className="muted">
+            {compositeRate != null ? `GST ${compositeRate}% on bill` : 'GST'}
+          </span>
+          <span className="tnum">{money2(gst)}</span>
+        </div>
         <div className="divider" style={{ margin: '6px 0' }} />
         <div className="t-row grand"><span>Total</span><span className="tnum">{money2(grand)}</span></div>
         <div className="pos-cart-actions">
@@ -666,7 +742,7 @@ export function POS({
             Parked{heldBills.length ? ` (${heldBills.length})` : ''}
           </Button>
           )}
-          <Button variant="outline" size="sm" icon="trash-2" onClick={clearBill}>Clear</Button>
+          <Button variant="outline" size="sm" icon="trash-2" onClick={() => setClearCartOpen(true)}>Clear</Button>
         </div>
         <Button variant="primary" className="block pos-pay-btn" icon="wallet" disabled={!cart.length} onClick={() => setPayOpen(true)}>
           Pay {money(grand)} <span className="kbd" style={{ marginLeft: 4 }}>F8</span>
@@ -681,9 +757,9 @@ export function POS({
       style={{ order: 1 }}
       onMouseDown={e => {
         const t = e.target as HTMLElement
-        if (scannerReady && !t.closest('.pos-search-input') && !t.closest('button') && !t.closest('.seg')) {
-          focusScanner()
-        }
+        if (payOpen || savedBill) return
+        if (t.closest('.pos-search-input') || t.closest('button') || t.closest('.seg')) return
+        engageScanner()
       }}
     >
       <div className="pos-toolbar">
@@ -696,10 +772,13 @@ export function POS({
             onChange={e => setBarcode(e.target.value)}
             onKeyDown={onBarcode}
             onBlur={() => {
-              if (!scannerReady) return
+              if (!scannerLock || !active || payOpen || savedBill) return
               window.setTimeout(() => {
+                if (!scannerLock) return
                 const el = document.activeElement
                 if (el?.classList.contains('pos-search-input')) return
+                if (el?.classList.contains('pos-discount-input')) return
+                if (el?.closest('.pos-cart')) return
                 if (payOpen || savedBill) return
                 focusScanner()
               }, 0)
@@ -730,6 +809,28 @@ export function POS({
             { value: 'wide', icon: 'grid-2x2', label: '' },
           ]}
         />
+      </div>
+
+      <div className="pos-gst-bar">
+        <Badge tone="info">GST: {gstSchemeShortLabel(effectiveTax?.scheme)}</Badge>
+        {schemeOverride && (
+          <button type="button" className="chip" onClick={() => setSchemeOverride(null)}>Store default</button>
+        )}
+        {canEditGst ? (
+          <Segmented
+            value={schemeOverride ?? effectiveTax?.scheme ?? 'PRODUCT'}
+            onChange={v => setSchemeOverride(v as GstScheme)}
+            options={[
+              { value: 'PRODUCT', label: 'Product' },
+              { value: 'COMPOSITE', label: 'Composite' },
+              { value: 'CATEGORY', label: 'Category' },
+            ]}
+          />
+        ) : (
+          <span className="muted" style={{ fontSize: 12 }}>
+            {effectiveTax?.scheme === 'CATEGORY' ? 'Category rates apply' : 'Set in Settings → Billing'}
+          </span>
+        )}
       </div>
 
       {!isSearching && (
@@ -801,10 +902,36 @@ export function POS({
           loading={heldBillsQuery.isPending}
           onClose={() => setParkedOpen(false)}
           onResume={resumeHeldBill}
-          onDiscard={discardParkedBill}
+          onDiscard={id => setDiscardId(id)}
           busyId={parkedBusyId}
         />
       )}
+      <ConfirmDeleteModal
+        open={discardId != null}
+        title="Discard parked bill?"
+        sub={(() => {
+          const b = heldBills.find(x => x.id === discardId)
+          return b ? `${b.billNo} · ${b.customerName}` : undefined
+        })()}
+        onClose={() => !parkedBusyId && setDiscardId(null)}
+        busy={parkedBusyId != null}
+        onConfirm={async () => {
+          if (!discardId) return
+          await discardParkedBill(discardId)
+          setDiscardId(null)
+        }}
+      />
+      <ConfirmDeleteModal
+        open={clearCartOpen}
+        title="Clear cart?"
+        sub={cart.length ? `${cart.length} item${cart.length === 1 ? '' : 's'} will be removed` : undefined}
+        confirmText="CLEAR"
+        onClose={() => setClearCartOpen(false)}
+        onConfirm={() => {
+          clearBill()
+          setClearCartOpen(false)
+        }}
+      />
     </div>
   )
 }

@@ -1,4 +1,4 @@
-const BASE = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080'
+import { getApiBaseUrl } from './api-base'
 
 // ── Token storage ─────────────────────────────────────────────────────────────
 
@@ -30,7 +30,7 @@ async function doRefresh(): Promise<string> {
   const refreshToken = getRefreshToken()
   if (!refreshToken) throw new Error('No refresh token')
 
-  const res = await fetch(`${BASE}/api/v1/auth/refresh`, {
+  const res = await fetch(`${getApiBaseUrl()}/api/v1/auth/refresh`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ refreshToken }),
@@ -70,7 +70,7 @@ export async function apiFetch<T = unknown>(
       headers.set('Authorization', `Bearer ${accessToken}`)
     }
 
-    return fetch(`${BASE}${path}`, { ...options, headers })
+    return fetch(`${getApiBaseUrl()}${path}`, { ...options, headers })
   }
 
   let res = await makeRequest(token)
@@ -121,7 +121,7 @@ export interface LoginResponse {
 }
 
 export async function login(email: string, password: string): Promise<LoginResponse> {
-  const res = await fetch(`${BASE}/api/v1/auth/login`, {
+  const res = await fetch(`${getApiBaseUrl()}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email, password }),

@@ -22,6 +22,7 @@ export function PurchaseDetailDrawer({
   onConfirm,
   onReceive,
   onPay,
+  onDelete,
 }: {
   purchase: PurchaseDetail | null
   loading?: boolean
@@ -31,6 +32,7 @@ export function PurchaseDetailDrawer({
   onConfirm?: () => void
   onReceive?: () => void
   onPay?: () => void
+  onDelete?: () => void
 }) {
   const toast = useToast()
   const receiptMeta = useReceiptMeta()
@@ -162,6 +164,11 @@ export function PurchaseDetailDrawer({
             {purchase.status === 'BILLED' && onPay && (
               <Button variant="primary" icon="check" disabled={busy} onClick={onPay}>
                 Mark paid
+              </Button>
+            )}
+            {purchase.status === 'DRAFT' && onDelete && (
+              <Button variant="danger-soft" icon="trash-2" disabled={busy} onClick={onDelete}>
+                Delete draft
               </Button>
             )}
           </div>

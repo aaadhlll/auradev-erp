@@ -1,8 +1,9 @@
 'use client'
 
-import { Icon, Button, Badge, Drawer } from './ui'
+import { Icon, Button, Badge, Drawer, ContentLoader } from './ui'
 import { money, money2 } from '@/lib/erp-data'
 import type { SavedBill } from '@/lib/billing-api'
+import { gstSchemeShortLabel, isBillLevelGstScheme } from '@/lib/gst'
 import { printReceipt, saveReceiptPdf, saveReceiptPng } from '@/lib/receipt-export'
 import { useReceiptMeta, useReceiptPrintOptions } from '@/lib/queries/use-settings'
 import { useToast } from './ui'
@@ -40,6 +41,8 @@ export function BillDetailDrawer({
   const receiptMeta = useReceiptMeta()
   const printOptions = useReceiptPrintOptions()
 
+  const billLevelGst = bill ? isBillLevelGstScheme(bill.gstScheme) : false
+
   if (!bill && !loading) return null
 
   const title = bill?.billNo ?? 'Bill'
@@ -48,10 +51,7 @@ export function BillDetailDrawer({
   return (
     <Drawer title={title} sub={sub} onClose={onClose}>
       {loading && !bill ? (
-        <div className="empty" style={{ padding: '40px 0' }}>
-          <Icon name="loader" size={22} />
-          <div style={{ fontWeight: 600, color: 'var(--fg)', marginTop: 8 }}>Loading bill…</div>
-        </div>
+        <ContentLoader label="Loading bill…" compact />
       ) : error ? (
         <div className="empty" style={{ padding: '40px 0' }}>
           <div className="ei"><Icon name="alert-circle" size={22} /></div>
@@ -61,7 +61,10 @@ export function BillDetailDrawer({
         <>
           <div className="row" style={{ justifyContent: 'space-between', marginBottom: 16 }}>
             <Badge tone={paymentTone(bill)} dot>{paymentLabel(bill)}</Badge>
-            <span className="td-sub">Cashier: {bill.cashierName}</span>
+            <div className="row gap8">
+              <Badge tone="info">{gstSchemeShortLabel(bill.gstScheme)}</Badge>
+              <span className="td-sub">Cashier: {bill.cashierName}</span>
+            </div>
           </div>
 
           <div className="row gap12" style={{ marginBottom: 16 }}>
@@ -83,6 +86,7 @@ export function BillDetailDrawer({
                   <th>Product</th>
                   <th className="num">Qty</th>
                   <th className="num">Rate</th>
+                  {!billLevelGst && <th className="num">GST%</th>}
                   <th className="num">Total</th>
                 </tr>
               </thead>
@@ -95,6 +99,7 @@ export function BillDetailDrawer({
                     </td>
                     <td className="num tnum">{line.quantity} {line.unitLabel}</td>
                     <td className="num tnum muted">{money2(line.unitPrice)}</td>
+                    {!billLevelGst && <td className="num tnum muted">{line.gstRate}%</td>}
                     <td className="num tnum td-strong">{money2(line.lineTotal)}</td>
                   </tr>
                 ))}
@@ -113,6 +118,16 @@ export function BillDetailDrawer({
                 <span className="tnum">-{money2(bill.billDiscount)}</span>
               </div>
             )}
+            {bill.gstSlabs.length > 0 && bill.gstSlabs.map(slab => (
+              <div key={slab.ratePct} className="row" style={{ justifyContent: 'space-between' }}>
+                <span className="muted">
+                  {billLevelGst
+                    ? `Composite GST ${slab.ratePct}% on ${money2(slab.taxableValue)}`
+                    : `GST ${slab.ratePct}% on ${money2(slab.taxableValue)}`}
+                </span>
+                <span className="tnum">{money2(slab.taxAmount)}</span>
+              </div>
+            ))}
             <div className="row" style={{ justifyContent: 'space-between' }}>
               <span className="muted">CGST</span>
               <span className="tnum">{money2(bill.cgstTotal)}</span>

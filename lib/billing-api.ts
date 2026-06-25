@@ -32,6 +32,12 @@ export interface BillSummary {
   createdAt: string
 }
 
+export interface GstSlab {
+  ratePct: number
+  taxableValue: number
+  taxAmount: number
+}
+
 export interface SavedBill {
   id: string
   billNo: string
@@ -40,6 +46,7 @@ export interface SavedBill {
   cashierName: string
   status: 'COMPLETED' | 'HELD' | 'VOID'
   discountMode: 'AMOUNT' | 'PERCENT'
+  gstScheme: GstScheme
   subtotal: number
   billDiscount: number
   cgstTotal: number
@@ -51,8 +58,11 @@ export interface SavedBill {
   changeDue: number | null
   createdAt: string
   updatedAt: string
+  gstSlabs: GstSlab[]
   lines: BillLine[]
 }
+
+export type GstScheme = 'PRODUCT' | 'COMPOSITE' | 'CATEGORY'
 
 export interface HeldBillSummary {
   id: string
@@ -67,6 +77,7 @@ export interface BillCartPayload {
   customerId: string
   discountMode: 'AMOUNT' | 'PERCENT'
   billDiscount: number
+  gstSchemeOverride?: GstScheme
   items: { productId: string; quantity: number; lineDiscount?: number }[]
 }
 
@@ -90,6 +101,11 @@ function mapBill(b: Record<string, unknown>): SavedBill {
     gstRate: Number(l.gstRate),
     lineTotal: Number(l.lineTotal),
   }))
+  const gstSlabs = ((b.gstSlabs as Record<string, unknown>[]) ?? []).map(s => ({
+    ratePct: Number(s.ratePct),
+    taxableValue: Number(s.taxableValue),
+    taxAmount: Number(s.taxAmount),
+  }))
   return {
     id: String(b.id),
     billNo: String(b.billNo),
@@ -98,6 +114,7 @@ function mapBill(b: Record<string, unknown>): SavedBill {
     cashierName: String(b.cashierName),
     status: String(b.status ?? 'COMPLETED') as SavedBill['status'],
     discountMode: String(b.discountMode ?? 'AMOUNT') as SavedBill['discountMode'],
+    gstScheme: String(b.gstScheme ?? 'PRODUCT') as GstScheme,
     subtotal: Number(b.subtotal),
     billDiscount: Number(b.billDiscount),
     cgstTotal: Number(b.cgstTotal),
@@ -109,6 +126,7 @@ function mapBill(b: Record<string, unknown>): SavedBill {
     changeDue: b.changeDue != null ? Number(b.changeDue) : null,
     createdAt: String(b.createdAt),
     updatedAt: String(b.updatedAt ?? b.createdAt),
+    gstSlabs,
     lines,
   }
 }

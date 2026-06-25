@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import {
-  Icon, Button, Badge, Checkbox, Field, TextInput, Select, Segmented, Modal, Drawer, Card, IconTile, useToast, useClickOutside,
+  Icon, Button, Badge, Checkbox, Field, TextInput, Select, Segmented, Modal, Drawer, Card, IconTile, ContentLoader, useToast, useClickOutside,
 } from './ui'
 import { CAT_TONE, CAT_ICON, stockStatus, money, type Product } from '@/lib/erp-data'
 import {
@@ -11,6 +11,8 @@ import {
   type ProductFormData, type ApiCategory, type StockMovement,
 } from '@/lib/inventory-api'
 import { useProductsQuery, useCategoriesQuery, useInvalidateCatalog } from '@/lib/queries/use-catalog'
+import { useTaxSettingsQuery } from '@/lib/queries/use-settings'
+import { gstRateSelectOptions } from '@/lib/gst'
 import { canEditInventory, canImportInventory, canExportInventory } from '@/lib/rbac'
 import { useAuth } from '@/lib/auth-context'
 import { InventoryImportModal } from './inventory-import-modal'
@@ -186,6 +188,8 @@ function ProductModal({ onClose, onSave, categories, initialProduct }: {
     stock: initialProduct ? String(initialProduct.stock) : '',
   })
   const [tried, setTried] = useState(false)
+  const { data: taxSettings } = useTaxSettingsQuery()
+  const taxOptions = gstRateSelectOptions(taxSettings?.enabledRates, f.tax)
   const set = (k: keyof ProductFormData) => (v: string) => setF(s => ({ ...s, [k]: v }))
   const err = (k: keyof ProductFormData) => tried && !String(f[k]).trim() ? 'Required' : null
   const valid = f.name.trim() && f.sku.trim() && f.price && f.mrp && f.categoryId
@@ -206,7 +210,7 @@ function ProductModal({ onClose, onSave, categories, initialProduct }: {
         </Button>
       </>}
     >
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      <div className="form-grid-2">
         <div style={{ gridColumn: '1 / -1' }}>
           <Field label="Product name" required error={err('name')}><TextInput value={f.name} onChange={set('name')} placeholder="e.g. Sona Masoori Rice" error={Boolean(err('name'))} /></Field>
         </div>
@@ -219,7 +223,7 @@ function ProductModal({ onClose, onSave, categories, initialProduct }: {
         <Field label="MRP (₹)" required error={err('mrp')}><TextInput type="number" value={f.mrp} onChange={set('mrp')} placeholder="0" error={Boolean(err('mrp'))} /></Field>
         <Field label="Selling price (₹)" required error={err('price')}><TextInput type="number" value={f.price} onChange={set('price')} placeholder="0" error={Boolean(err('price'))} /></Field>
         <Field label="Cost price (₹)" optional><TextInput type="number" value={f.cost} onChange={set('cost')} placeholder="0" /></Field>
-        <Field label="GST rate"><Select value={f.tax} onChange={set('tax')} options={['0', '5', '12', '18'].map(t => ({ value: t, label: t + '%' }))} /></Field>
+        <Field label="GST rate"><Select value={f.tax} onChange={set('tax')} options={taxOptions} /></Field>
         <Field label="Reorder level"><TextInput type="number" value={f.reorder} onChange={set('reorder')} placeholder="0" /></Field>
         {!isEdit && <Field label="Initial stock"><TextInput type="number" value={f.stock} onChange={set('stock')} placeholder="0" /></Field>}
       </div>
@@ -247,6 +251,7 @@ export function Inventory({
   const products = productsQuery.data ?? []
   const categories = categoriesQuery.data ?? []
   const loading = productsQuery.isPending || categoriesQuery.isPending
+  const initialLoading = loading && products.length === 0
   const error = productsQuery.error?.message ?? categoriesQuery.error?.message ?? null
   const [q, setQ] = useState('')
   const [cat, setCat] = useState('all')
@@ -358,7 +363,9 @@ export function Inventory({
       <div className="row" style={{ justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
         <div>
           <div className="section-title">Inventory</div>
-          <div className="section-sub">{products.length} products · {categories.length} categories</div>
+          <div className="section-sub">
+            {initialLoading ? 'Loading catalog…' : `${products.length} products · ${categories.length} categories`}
+          </div>
         </div>
         {(canImport || canExport || canEdit) && (
         <div className="row gap8">
@@ -383,6 +390,10 @@ export function Inventory({
       )}
 
       <Card noBody>
+        {initialLoading ? (
+          <ContentLoader label="Loading inventory…" />
+        ) : (
+        <>
         <div className="filter-toolbar">
           <div className="input sm" style={{ width: 260 }}>
             <Icon name="search" size={14} />
@@ -421,14 +432,7 @@ export function Inventory({
               </tr>
             </thead>
             <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan={10} style={{ textAlign: 'center', padding: '48px 0', color: 'var(--fg-subtle)' }}>
-                    <Icon name="loader" size={20} />
-                    <div style={{ marginTop: 8, fontSize: 13 }}>Loading products…</div>
-                  </td>
-                </tr>
-              ) : error ? (
+              {error ? (
                 <tr>
                   <td colSpan={10} style={{ textAlign: 'center', padding: '48px 0' }}>
                     <div style={{ color: 'var(--danger-fg)', marginBottom: 10, fontSize: 13 }}>{error}</div>
@@ -487,6 +491,8 @@ export function Inventory({
             <Button size="sm" variant="outline" iconRight="chevron-right" disabled={page >= pages - 1} onClick={() => setPage(p => p + 1)}>Next</Button>
           </div>
         </div>
+        </>
+        )}
       </Card>
 
       {canEdit && adjust && <AdjustModal product={adjust} onClose={() => setAdjust(null)} onSave={doAdjust} />}

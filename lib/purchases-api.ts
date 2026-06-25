@@ -196,6 +196,10 @@ export async function payPurchase(id: string): Promise<PurchaseDetail> {
   return mapDetail(data)
 }
 
+export async function deletePurchase(id: string): Promise<void> {
+  await apiFetch<void>(`/api/v1/purchases/${id}`, { method: 'DELETE' })
+}
+
 export function statusLabel(status: PurchaseStatus): string {
   switch (status) {
     case 'DRAFT': return 'Draft'

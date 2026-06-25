@@ -8,6 +8,7 @@ import {
   confirmPurchase,
   payPurchase,
   receivePurchase,
+  deletePurchase,
   statusLabel,
   statusTone,
 } from '@/lib/purchases-api'
@@ -28,6 +29,7 @@ import { SuppliersPanel } from './suppliers'
 import type { Supplier } from '@/lib/purchases-api'
 import { useAuth } from '@/lib/auth-context'
 import { canManagePurchases, canManageSuppliers } from '@/lib/rbac'
+import { ConfirmDeleteModal } from './confirm-delete-modal'
 
 function formatDate(iso: string): string {
   return new Date(iso + (iso.includes('T') ? '' : 'T00:00:00')).toLocaleDateString('en-IN', {
@@ -65,6 +67,7 @@ export function Purchases({
   const [editSupplier, setEditSupplier] = useState<Supplier | null>(null)
   const [importKind, setImportKind] = useState<'suppliers' | 'purchases' | null>(null)
   const [actionBusy, setActionBusy] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
 
   useEffect(() => {
     if (tab === 'suppliers' && !canSuppliers) setTab('bills')
@@ -344,8 +347,34 @@ export function Purchases({
           onPay={canManage && detailQuery.data?.status === 'BILLED'
             ? () => runAction(() => payPurchase(selectedId), 'Marked as paid')
             : undefined}
+          onDelete={canManage && detailQuery.data?.status === 'DRAFT'
+            ? () => setDeleteOpen(true)
+            : undefined}
         />
       )}
+
+      <ConfirmDeleteModal
+        open={deleteOpen}
+        title="Delete draft purchase?"
+        sub={detailQuery.data ? `${detailQuery.data.purchaseNo} · ${detailQuery.data.supplierName}` : undefined}
+        onClose={() => !actionBusy && setDeleteOpen(false)}
+        busy={actionBusy}
+        onConfirm={async () => {
+          if (!selectedId) return
+          setActionBusy(true)
+          try {
+            await deletePurchase(selectedId)
+            invalidatePurchases()
+            setDeleteOpen(false)
+            setSelectedId(null)
+            toast('Draft purchase deleted', { icon: 'trash-2' })
+          } catch (e) {
+            toast(e instanceof Error ? e.message : 'Could not delete purchase', { tone: 'danger' })
+          } finally {
+            setActionBusy(false)
+          }
+        }}
+      />
     </div>
   )
 }
