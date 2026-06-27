@@ -65,13 +65,16 @@ async function authFetch(path: string, init: RequestInit = {}): Promise<Response
 
 export async function uploadStoreLogo(file: File): Promise<StoreProfile> {
   const form = new FormData()
-  form.append('file', file)
+  form.append('file', file, file.name)
   const res = await authFetch('/api/v1/settings/logo', { method: 'POST', body: form })
   if (!res.ok) {
     const body = await res.json().catch(() => ({})) as Record<string, unknown>
-    throw new ApiError(res.status, String(body?.detail ?? body?.message ?? res.statusText), body)
+    const code = body?.code ? String(body.code) + ': ' : ''
+    const detail = String(body?.detail ?? body?.message ?? res.statusText)
+    throw new ApiError(res.status, code + detail, body)
   }
-  return res.json() as Promise<StoreProfile>
+  const profile = await res.json() as StoreProfile
+  return { ...profile, logoUrl: resolveLogoUrl(profile.logoUrl) ?? profile.logoUrl }
 }
 
 export function storeProfileToReceiptMeta(profile: StoreProfile | null | undefined) {
@@ -88,8 +91,12 @@ export function storeProfileToReceiptMeta(profile: StoreProfile | null | undefin
 
 export function resolveLogoUrl(logoUrl: string | null | undefined): string | undefined {
   if (!logoUrl) return undefined
-  if (logoUrl.startsWith('http://') || logoUrl.startsWith('https://')) return logoUrl
   const base = getApiBaseUrl().replace(/\/$/, '')
+  const uploadsIdx = logoUrl.indexOf('/uploads/')
+  if (uploadsIdx >= 0) {
+    return `${base}${logoUrl.slice(uploadsIdx)}`
+  }
+  if (logoUrl.startsWith('http://') || logoUrl.startsWith('https://')) return logoUrl
   return logoUrl.startsWith('/') ? `${base}${logoUrl}` : `${base}/${logoUrl}`
 }
 
