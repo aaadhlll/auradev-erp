@@ -277,3 +277,34 @@ export async function fetchMovements(productId: string): Promise<StockMovement[]
 export async function fetchCategories(): Promise<ApiCategory[]> {
   return apiFetch<ApiCategory[]>('/api/v1/categories')
 }
+
+// ── Export ────────────────────────────────────────────────────────────────────
+
+export interface ProductExportFilters {
+  q?: string
+  category?: string
+  unit?: 'all' | 'pcs' | 'kg'
+  status?: 'all' | 'in' | 'low' | 'out'
+}
+
+function mapUnitFilter(unit?: string): string | undefined {
+  if (!unit || unit === 'all') return undefined
+  if (unit === 'kg') return 'kg'
+  if (unit === 'pcs') return 'unit'
+  return unit
+}
+
+export async function downloadProductsExport(filters: ProductExportFilters = {}): Promise<void> {
+  const { downloadAuthenticatedFile } = await import('./file-download')
+  const params = new URLSearchParams()
+  if (filters.q?.trim()) params.set('q', filters.q.trim())
+  if (filters.category && filters.category !== 'all') params.set('category', filters.category)
+  const unit = mapUnitFilter(filters.unit)
+  if (unit) params.set('unit', unit)
+  if (filters.status && filters.status !== 'all') params.set('status', filters.status)
+  const qs = params.toString()
+  await downloadAuthenticatedFile(
+    `/api/v1/products/export/csv${qs ? `?${qs}` : ''}`,
+    'inventory.csv',
+  )
+}
