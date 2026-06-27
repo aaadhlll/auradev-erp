@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { Button, Badge, Card, TextInput, ContentLoader } from './ui'
+import { useEffect, useRef, useState } from 'react'
+import { Button, Badge, Card, TextInput, ContentLoader, useToast, useClickOutside } from './ui'
 import { money } from '@/lib/erp-data'
 import type { BillSummary } from '@/lib/billing-api'
+import { downloadBillsExport, type BillExportMode } from '@/lib/billing-api'
 import { useBillQuery, useBillsQuery } from '@/lib/queries/use-bills'
 import { BillDetailDrawer } from './bill-detail'
 
@@ -34,9 +35,14 @@ export function Bills({
   prefillKey?: number
   onPrefillConsumed?: () => void
 } = {}) {
+  const toast = useToast()
   const [q, setQ] = useState('')
   const [page, setPage] = useState(0)
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [exportOpen, setExportOpen] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const exportRef = useRef<HTMLDivElement>(null)
+  useClickOutside(exportRef, () => setExportOpen(false), exportOpen)
 
   useEffect(() => {
     if (!prefillQuery || prefillKey == null) return
@@ -60,6 +66,19 @@ export function Bills({
 
   const openBill = (row: BillSummary) => setSelectedId(row.id)
 
+  async function doExport(mode: BillExportMode) {
+    setExportOpen(false)
+    setExporting(true)
+    try {
+      await downloadBillsExport(q, mode)
+      toast(mode === 'detailed' ? 'Line-item export downloaded' : 'Bill summary export downloaded', { icon: 'file-down' })
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Export failed', { tone: 'danger' })
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="content-pad page-shell">
       <div className="page-header">
@@ -67,7 +86,7 @@ export function Bills({
           <h1 className="page-header-title">Sales bills</h1>
           <p className="muted page-header-sub">Completed transactions · view details and reprint receipts</p>
         </div>
-        <div className="page-header-actions">
+        <div className="page-header-actions row gap8">
           <TextInput
             size="sm"
             icon="search"
@@ -75,6 +94,29 @@ export function Bills({
             value={q}
             onChange={v => { setQ(v); setPage(0) }}
           />
+          <div ref={exportRef} style={{ position: 'relative' }}>
+            <Button
+              size="sm"
+              icon="download"
+              iconRight="chevron-down"
+              disabled={exporting || initialLoading}
+              onClick={() => setExportOpen(v => !v)}
+            >
+              {exporting ? 'Exporting…' : 'Export'}
+            </Button>
+            {exportOpen && (
+              <div className="popover" style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 220, zIndex: 20 }}>
+                <button type="button" className="menu-item" onClick={() => void doExport('summary')}>
+                  Summary CSV
+                  <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>one row per bill</span>
+                </button>
+                <button type="button" className="menu-item" onClick={() => void doExport('detailed')}>
+                  Line items CSV
+                  <span className="muted" style={{ fontSize: 11, marginLeft: 6 }}>full product detail</span>
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

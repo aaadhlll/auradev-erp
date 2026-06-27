@@ -240,3 +240,13 @@ export async function completeHeldBill(id: string, payload: CreateBillPayload): 
 export async function discardHeldBill(id: string): Promise<void> {
   await apiFetch<void>(`/api/v1/bills/held/${id}`, { method: 'DELETE' })
 }
+
+export type BillExportMode = 'summary' | 'detailed'
+
+export async function downloadBillsExport(q = '', mode: BillExportMode = 'summary'): Promise<void> {
+  const { downloadAuthenticatedFile } = await import('./file-download')
+  const params = new URLSearchParams({ mode })
+  if (q.trim()) params.set('q', q.trim())
+  const suffix = mode === 'detailed' ? 'line-items' : 'summary'
+  await downloadAuthenticatedFile(`/api/v1/bills/export/csv?${params}`, `bills-${suffix}.csv`)
+}

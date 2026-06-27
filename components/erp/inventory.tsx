@@ -1,19 +1,20 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import {
-  Icon, Button, Badge, Checkbox, Field, TextInput, Select, Segmented, Modal, Drawer, Card, IconTile, ContentLoader, useToast, useClickOutside,
+  Icon, Button, Badge, Checkbox, Field, TextInput, Select, Segmented, Modal, Drawer, Card, IconTile, ContentLoader, KpiCard, useToast, useClickOutside,
 } from './ui'
 import { CAT_TONE, CAT_ICON, stockStatus, money, type Product } from '@/lib/erp-data'
 import {
   fetchProduct, createProduct, updateProduct, adjustStock,
-  fetchMovements, movementLabel,
+  fetchMovements, movementLabel, downloadProductsExport,
   type ProductFormData, type ApiCategory, type StockMovement,
 } from '@/lib/inventory-api'
+import { computeInventorySummary } from '@/lib/inventory-summary'
 import { useProductsQuery, useCategoriesQuery, useInvalidateCatalog } from '@/lib/queries/use-catalog'
 import { useTaxSettingsQuery } from '@/lib/queries/use-settings'
 import { gstRateSelectOptions } from '@/lib/gst'
-import { canEditInventory, canImportInventory, canExportInventory } from '@/lib/rbac'
+import { canEditInventory, canImportInventory, canExportInventory, canViewInventoryCost } from '@/lib/rbac'
 import { useAuth } from '@/lib/auth-context'
 import { InventoryImportModal } from './inventory-import-modal'
 
@@ -245,6 +246,7 @@ export function Inventory({
   const canEdit = canEditInventory(user)
   const canImport = canImportInventory(user)
   const canExport = canExportInventory(user)
+  const showCost = canViewInventoryCost(user)
   const invalidateCatalog = useInvalidateCatalog()
   const productsQuery = useProductsQuery()
   const categoriesQuery = useCategoriesQuery()
@@ -265,7 +267,10 @@ export function Inventory({
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [editProduct, setEditProduct] = useState<Product | null>(null)
+  const [exporting, setExporting] = useState(false)
   const PER = 12
+
+  const summary = useMemo(() => computeInventorySummary(products), [products])
 
   function refetch() {
     void productsQuery.refetch()
@@ -358,6 +363,37 @@ export function Inventory({
     }
   }
 
+  async function doExport(onlySelected = false) {
+    setExporting(true)
+    try {
+      if (onlySelected && sel.size > 0) {
+        const selected = products.filter(p => sel.has(p.id))
+        const { triggerFileDownload } = await import('@/lib/file-download')
+        const headers = showCost
+          ? ['Name', 'SKU', 'Barcode', 'Category', 'Unit', 'MRP', 'Price', 'Cost', 'Stock', 'Reorder', 'Status', 'Cost Value', 'Selling Value']
+          : ['Name', 'SKU', 'Barcode', 'Category', 'Unit', 'MRP', 'Price', 'Stock', 'Reorder', 'Status', 'Selling Value']
+        const lines = [headers.join(',')]
+        for (const p of selected) {
+          const st = stockStatus(p)
+          const sellingValue = p.stock * p.price
+          const row = showCost
+            ? [p.name, p.sku, p.barcode, p.cat, p.unit, p.mrp, p.price, p.cost, p.stock, p.reorder, st, p.stock * p.cost, sellingValue]
+            : [p.name, p.sku, p.barcode, p.cat, p.unit, p.mrp, p.price, p.stock, p.reorder, st, sellingValue]
+          lines.push(row.map(v => `"${String(v).replace(/"/g, '""')}"`).join(','))
+        }
+        triggerFileDownload(new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' }), 'inventory-selected.csv')
+        toast(`Exported ${selected.length} selected products`, { icon: 'file-down' })
+      } else {
+        await downloadProductsExport({ q, category: cat, unit: unit as 'all' | 'pcs' | 'kg', status: status as 'all' | 'in' | 'low' | 'out' })
+        toast(`Exported ${rows.length} products to CSV`, { icon: 'file-down' })
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Export failed', { tone: 'danger' })
+    } finally {
+      setExporting(false)
+    }
+  }
+
   return (
     <div className="content-pad page-shell compact">
       <div className="page-header">
@@ -370,11 +406,30 @@ export function Inventory({
         {(canImport || canExport || canEdit) && (
         <div className="row gap8 page-header-actions" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {canImport && <Button size="sm" icon="upload" onClick={() => setImportOpen(true)}>Bulk import</Button>}
-          {canExport && <Button size="sm" icon="download" onClick={() => toast(`Exported ${rows.length} rows to CSV`, { icon: 'file-down' })}>Export</Button>}
+          {canExport && <Button size="sm" icon="download" disabled={exporting} onClick={() => void doExport(false)}>{exporting ? 'Exporting…' : 'Export'}</Button>}
           {canEdit && <Button size="sm" variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add Product</Button>}
         </div>
         )}
       </div>
+
+      {!initialLoading && (
+        <div className="kpi-grid">
+          <KpiCard label="Total products" value={String(summary.totalProducts)} icon="package" tone="tile-primary" />
+          {showCost ? (
+            <KpiCard label="Stock value (cost)" value={money(summary.costValue)} icon="wallet" tone="tile-info" vs={`${summary.productsWithCost} with cost price`} />
+          ) : (
+            <KpiCard label="Units on hand" value={summary.totalUnits.toLocaleString('en-IN')} icon="layers" tone="tile-info" />
+          )}
+          <KpiCard label="Stock value (selling)" value={money(summary.sellingValue)} icon="indian-rupee" tone="tile-success" vs={`MRP ${money(summary.mrpValue)}`} />
+          <KpiCard
+            label="Stock alerts"
+            value={String(summary.lowStockCount + summary.outOfStockCount)}
+            icon="alert-triangle"
+            tone="tile-warning"
+            vs={`${summary.lowStockCount} low · ${summary.outOfStockCount} out`}
+          />
+        </div>
+      )}
 
       {lowCount > 0 && (
         <div className="alert-banner">
@@ -412,7 +467,7 @@ export function Inventory({
             <div className="row gap8">
               <span className="muted" style={{ fontSize: 12.5, fontWeight: 600 }}>{sel.size} selected</span>
               <Button size="sm" variant="outline" icon="package-plus" onClick={() => toast(`Bulk adjust for ${sel.size} items`)}>Adjust</Button>
-              {canExport && <Button size="sm" variant="outline" icon="download" onClick={() => toast(`Exported ${sel.size} rows`)}>Export</Button>}
+              {canExport && <Button size="sm" variant="outline" icon="download" disabled={exporting} onClick={() => void doExport(true)}>Export selected</Button>}
             </div>
           )}
         </div>

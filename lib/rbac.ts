@@ -70,6 +70,11 @@ export function canExportInventory(user: AuthUser | null | undefined): boolean {
   return hasPermission(user, 'INVENTORY_EXPORT')
 }
 
+export function canViewInventoryCost(user: AuthUser | null | undefined): boolean {
+  if (!user) return false
+  return user.role !== 'CASHIER'
+}
+
 const VIEW_ORDER: ViewId[] = ['dashboard', 'pos', 'bills', 'inventory', 'purchases', 'settings']
 
 export function firstAccessibleView(user: AuthUser | null | undefined): ViewId {
