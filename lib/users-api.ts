@@ -6,6 +6,7 @@ export type UserRole =
   | 'MANAGER'
   | 'CASHIER'
   | 'INVENTORY_STAFF'
+  | 'PROCUREMENT_STAFF'
   | 'ACCOUNTANT'
 
 export type UserStatus = 'ACTIVE' | 'INACTIVE'
@@ -39,6 +40,7 @@ export const ASSIGNABLE_ROLES: { value: UserRole; label: string }[] = [
   { value: 'MANAGER', label: 'Manager' },
   { value: 'CASHIER', label: 'Cashier' },
   { value: 'INVENTORY_STAFF', label: 'Inventory Staff' },
+  { value: 'PROCUREMENT_STAFF', label: 'Procurement Staff' },
   { value: 'ACCOUNTANT', label: 'Accountant' },
 ]
 

@@ -4,8 +4,8 @@ import { useEffect, useRef, useState } from 'react'
 import { Button, Badge, Card, TextInput, ContentLoader, useToast, useClickOutside } from './ui'
 import { money } from '@/lib/erp-data'
 import type { BillSummary } from '@/lib/billing-api'
-import { downloadBillsExport, type BillExportMode } from '@/lib/billing-api'
-import { useBillQuery, useBillsQuery } from '@/lib/queries/use-bills'
+import { downloadBillsExport, downloadSalesReturnsReport, type BillExportMode } from '@/lib/billing-api'
+import { useBillQuery, useBillsQuery, useSalesReturnsReportQuery } from '@/lib/queries/use-bills'
 import { BillDetailDrawer } from './bill-detail'
 
 function formatWhen(iso: string): string {
@@ -41,6 +41,9 @@ export function Bills({
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [exportOpen, setExportOpen] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [tab, setTab] = useState<'bills' | 'returns'>('bills')
+  const [returnQ, setReturnQ] = useState('')
+  const [returnPage, setReturnPage] = useState(0)
   const exportRef = useRef<HTMLDivElement>(null)
   useClickOutside(exportRef, () => setExportOpen(false), exportOpen)
 
@@ -58,6 +61,7 @@ export function Bills({
   }, [openBillId, onOpenBillConsumed])
 
   const billsQuery = useBillsQuery(q, page)
+  const returnsQuery = useSalesReturnsReportQuery(returnQ, returnPage, tab === 'returns')
   const billDetailQuery = useBillQuery(selectedId)
   const rows = billsQuery.data?.items ?? []
   const totalPages = billsQuery.data?.totalPages ?? 1
@@ -79,14 +83,30 @@ export function Bills({
     }
   }
 
+  async function exportReturns() {
+    setExporting(true)
+    try {
+      await downloadSalesReturnsReport(returnQ)
+      toast('Sales returns report downloaded', { icon: 'file-down' })
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Export failed', { tone: 'danger' })
+    } finally {
+      setExporting(false)
+    }
+  }
+
+  const returnRows = returnsQuery.data?.items ?? []
+  const returnedUnits = returnRows.reduce((sum, row) => sum + row.quantity, 0)
+  const refundedTotal = returnRows.reduce((sum, row) => sum + row.refundAmount, 0)
+
   return (
     <div className="content-pad page-shell">
       <div className="page-header">
         <div className="page-header-main">
           <h1 className="page-header-title">Sales bills</h1>
-          <p className="muted page-header-sub">Completed transactions · view details and reprint receipts</p>
+          <p className="muted page-header-sub">Completed transactions, returns and receipts</p>
         </div>
-        <div className="page-header-actions row gap8">
+        {tab === 'bills' ? <div className="page-header-actions row gap8">
           <TextInput
             size="sm"
             icon="search"
@@ -117,10 +137,18 @@ export function Bills({
               </div>
             )}
           </div>
-        </div>
+        </div> : <div className="page-header-actions row gap8">
+          <TextInput size="sm" icon="search" placeholder="Return, bill or product…" value={returnQ} onChange={v => { setReturnQ(v); setReturnPage(0) }} />
+          <Button size="sm" icon="download" disabled={exporting} onClick={() => void exportReturns()}>{exporting ? 'Exporting…' : 'Export CSV'}</Button>
+        </div>}
       </div>
 
-      <Card title="Bill history" sub={initialLoading ? 'Loading…' : `${total} completed bill${total === 1 ? '' : 's'}`} noBody>
+      <div className="row gap8" style={{ marginBottom: 16 }}>
+        <Button size="sm" variant={tab === 'bills' ? 'primary' : 'outline'} onClick={() => setTab('bills')}>Sales bills</Button>
+        <Button size="sm" variant={tab === 'returns' ? 'primary' : 'outline'} icon="rotate-ccw" onClick={() => setTab('returns')}>Returns report</Button>
+      </div>
+
+      {tab === 'bills' ? <Card title="Bill history" sub={initialLoading ? 'Loading…' : `${total} completed bill${total === 1 ? '' : 's'}`} noBody>
         {initialLoading ? (
           <ContentLoader />
         ) : (
@@ -175,7 +203,22 @@ export function Bills({
             </div>
           </div>
         )}
-      </Card>
+      </Card> : <>
+        <div className="row gap12 bill-detail-kpis" style={{ marginBottom: 16, flexWrap: 'wrap' }}>
+          <div className="kpi" style={{ flex: 1, padding: 12, gap: 4 }}><div className="kpi-label">Return lines</div><div className="kpi-val tnum" style={{ fontSize: 22 }}>{returnsQuery.data?.totalElements ?? 0}</div></div>
+          <div className="kpi" style={{ flex: 1, padding: 12, gap: 4 }}><div className="kpi-label">Units in this page</div><div className="kpi-val tnum" style={{ fontSize: 22 }}>{returnedUnits}</div></div>
+          <div className="kpi" style={{ flex: 1, padding: 12, gap: 4 }}><div className="kpi-label">Refunds in this page</div><div className="kpi-val tnum" style={{ fontSize: 22 }}>{money(refundedTotal)}</div></div>
+        </div>
+        <Card title="Sales returns" sub="Every returned product line · refund, reason and staff trail" noBody>
+          <div className="tbl-wrap"><table className="tbl tbl-clickable"><thead><tr><th>Return</th><th>Bill / customer</th><th>Product</th><th className="num">Qty</th><th className="num">Refund</th><th>Method</th><th>Reason</th><th>Processed by</th><th>Date</th></tr></thead>
+            <tbody>{returnsQuery.isLoading ? <tr><td colSpan={9} style={{ textAlign: 'center', padding: '40px 0' }}>Loading returns…</td></tr>
+              : returnsQuery.error ? <tr><td colSpan={9} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--danger-fg)' }}>{returnsQuery.error.message}</td></tr>
+              : returnRows.length === 0 ? <tr><td colSpan={9} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--fg-subtle)' }}>No returns found.</td></tr>
+              : returnRows.map(row => <tr key={row.id + row.productName} onClick={() => setSelectedId(row.billId)} style={{ cursor: 'pointer' }}><td className="mono td-strong">{row.returnNo}</td><td><div>{row.billNo}</div><div className="td-sub">{row.customerName}</div></td><td><div className="td-strong">{row.productName}</div><div className="td-sub mono">{row.sku}</div></td><td className="num tnum" style={{ color: 'var(--danger-fg)' }}>{row.quantity}</td><td className="num tnum td-strong">{money(row.refundAmount)}</td><td><Badge tone="info">{row.refundMethod}</Badge></td><td className="muted">{row.reason}</td><td>{row.processedBy}</td><td className="muted tnum">{formatWhen(row.createdAt)}</td></tr>)}</tbody>
+          </table></div>
+          {(returnsQuery.data?.totalPages ?? 1) > 1 && <div className="filter-toolbar-foot" style={{ justifyContent: 'space-between' }}><span className="muted" style={{ fontSize: 12.5 }}>Page {returnPage + 1} of {returnsQuery.data?.totalPages}</span><div className="row gap8"><Button size="sm" variant="outline" disabled={returnPage <= 0} onClick={() => setReturnPage(p => p - 1)}>Previous</Button><Button size="sm" variant="outline" disabled={returnPage >= (returnsQuery.data?.totalPages ?? 1) - 1} onClick={() => setReturnPage(p => p + 1)}>Next</Button></div></div>}
+        </Card>
+      </>}
 
       {selectedId && (
         <BillDetailDrawer

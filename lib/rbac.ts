@@ -1,4 +1,4 @@
-import type { ViewId } from '@/components/erp/shell'
+import { moduleForView, type ViewId } from './modules'
 import type { AuthUser } from './api'
 import { hasAnyPermission, hasPermission, type Permission } from './permissions'
 
@@ -6,6 +6,8 @@ export type { Permission }
 
 export function canAccessView(user: AuthUser | null | undefined, view: ViewId): boolean {
   if (!user) return false
+  const module = moduleForView(view)
+  if (user.modules && !user.modules.includes(module.id)) return false
   switch (view) {
     case 'dashboard':
       return hasPermission(user, 'DASHBOARD_VIEW')
@@ -89,7 +91,7 @@ export function formatRoleLabel(role: string): string {
     .replace(/\b\w/g, c => c.toUpperCase())
 }
 
-export type SettingsSectionId = 'store' | 'billing' | 'users' | 'tax' | 'payments' | 'printer' | 'audit'
+export type SettingsSectionId = 'store' | 'billing' | 'users' | 'modules' | 'tax' | 'payments' | 'printer' | 'audit'
 
 export function canAccessSettingsSection(user: AuthUser | null | undefined, section: SettingsSectionId): boolean {
   if (!user) return false
@@ -101,6 +103,7 @@ export function canAccessSettingsSection(user: AuthUser | null | undefined, sect
     case 'printer':
       return hasAnyPermission(user, 'SETTINGS_PRINTER_VIEW', 'SETTINGS_PRINTER_EDIT')
     case 'users':
+    case 'modules':
       return hasPermission(user, 'SETTINGS_USERS_MANAGE')
     case 'audit':
       return hasPermission(user, 'AUDIT_VIEW')
@@ -122,6 +125,7 @@ export function canEditSettingsSection(user: AuthUser | null | undefined, sectio
     case 'printer':
       return hasPermission(user, 'SETTINGS_PRINTER_EDIT')
     case 'users':
+    case 'modules':
       return hasPermission(user, 'SETTINGS_USERS_MANAGE')
     default:
       return false

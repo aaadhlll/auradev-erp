@@ -11,6 +11,7 @@ import {
   type BillingSettings,
   type TaxSettings,
 } from '@/lib/settings-api'
+import { setCurrency } from '@/lib/erp-data'
 import { useAuth } from '@/lib/auth-context'
 import {
   DEFAULT_RECEIPT_META,
@@ -23,7 +24,11 @@ export function useStoreProfileQuery() {
   const { user } = useAuth()
   return useQuery({
     queryKey: ['store-profile'],
-    queryFn: fetchStoreProfile,
+    queryFn: async () => {
+      const profile = await fetchStoreProfile()
+      setCurrency(profile.currency)
+      return profile
+    },
     enabled: Boolean(user),
     staleTime: 5 * 60_000,
   })
@@ -88,7 +93,8 @@ export function mergePrintOptions(
   return {
     ...base,
     showCashier: billing.showCashierOnReceipt,
-    showGstBreakup: billing.showGstBreakupOnReceipt,
+    showTax: billing.taxEnabled,
+    showGstBreakup: billing.taxEnabled && billing.showGstBreakupOnReceipt,
     showCustomer: billing.showCustomerOnReceipt,
   }
 }
@@ -100,6 +106,7 @@ export function printerToPrintOptions(settings: PrinterSettings | null | undefin
     showLogo: settings.showLogo,
     copies: settings.copies,
     showCashier: DEFAULT_RECEIPT_PRINT.showCashier,
+    showTax: DEFAULT_RECEIPT_PRINT.showTax,
     showGstBreakup: DEFAULT_RECEIPT_PRINT.showGstBreakup,
     showCustomer: DEFAULT_RECEIPT_PRINT.showCustomer,
   }

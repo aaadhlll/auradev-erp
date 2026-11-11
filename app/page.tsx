@@ -1,5 +1,5 @@
-import { ERPApp } from '@/components/erp/app'
+import { redirect } from 'next/navigation'
 
 export default function Home() {
-  return <ERPApp />
+  redirect('/home')
 }

@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { fetchBill, fetchBills } from '@/lib/billing-api'
+import { fetchBill, fetchBills, fetchSalesReturnsReport } from '@/lib/billing-api'
 
 export function useBillsQuery(q: string, page: number) {
   return useQuery({
@@ -14,5 +14,14 @@ export function useBillQuery(id: string | null) {
     queryKey: ['bill', id],
     queryFn: () => fetchBill(id!),
     enabled: Boolean(id),
+  })
+}
+
+export function useSalesReturnsReportQuery(q: string, page: number, enabled = true) {
+  return useQuery({
+    queryKey: ['sales-returns-report', q, page],
+    queryFn: () => fetchSalesReturnsReport(q, page),
+    placeholderData: prev => prev,
+    enabled,
   })
 }

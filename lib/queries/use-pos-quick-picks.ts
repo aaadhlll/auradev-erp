@@ -5,7 +5,7 @@ import { fetchPosQuickPicks } from '@/lib/inventory-api'
 import { useAuth } from '@/lib/auth-context'
 import { queryKeys } from './keys'
 
-const POS_QUICK_PICKS_STALE_MS = 2 * 60_000
+const POS_QUICK_PICKS_REFRESH_MS = 15_000
 
 export function usePosQuickPicksQuery() {
   const { user } = useAuth()
@@ -13,7 +13,9 @@ export function usePosQuickPicksQuery() {
     queryKey: queryKeys.posQuickPicks(),
     queryFn: () => fetchPosQuickPicks(12),
     enabled: Boolean(user),
-    staleTime: POS_QUICK_PICKS_STALE_MS,
+    staleTime: 0,
+    refetchInterval: POS_QUICK_PICKS_REFRESH_MS,
+    refetchOnWindowFocus: true,
   })
 }
 

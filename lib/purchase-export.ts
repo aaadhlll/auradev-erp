@@ -3,12 +3,12 @@ import { statusLabel } from './purchases-api'
 import { DEFAULT_RECEIPT_META, DEFAULT_RECEIPT_PRINT, type ReceiptMeta, type ReceiptPrintOptions } from './receipt-export'
 
 function money(n: number): string {
-  return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  return 'QAR ' + n.toLocaleString('en-QA', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function formatDate(iso: string): string {
   const d = iso.includes('T') ? iso : iso + 'T00:00:00'
-  return new Date(d).toLocaleDateString('en-IN', {
+  return new Date(d).toLocaleDateString('en-QA', {
     day: 'numeric', month: 'short', year: 'numeric',
   })
 }
@@ -18,7 +18,7 @@ function purchaseLines(purchase: PurchaseDetail, meta: ReceiptMeta): string[] {
     meta.storeName ?? DEFAULT_RECEIPT_META.storeName!,
     meta.storePhone ?? DEFAULT_RECEIPT_META.storePhone!,
   ]
-  if (meta.gstin) lines.push(`GSTIN: ${meta.gstin}`)
+  if (meta.gstin) lines.push(`CR / TIN: ${meta.gstin}`)
   if (meta.address) lines.push(meta.address)
   lines.push(
     '--------------------------------',

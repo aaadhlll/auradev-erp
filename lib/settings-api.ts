@@ -1,6 +1,7 @@
 import { apiFetch } from './api'
 import { getAccessToken, getRefreshToken, clearTokens, ApiError } from './api'
 import { getApiBaseUrl } from './api-base'
+import type { CurrencyCode } from './erp-data'
 
 export interface StoreProfile {
   tenantId: string
@@ -12,6 +13,7 @@ export interface StoreProfile {
   billNoPrefix: string
   billFooter: string | null
   logoUrl: string | null
+  currency: CurrencyCode
 }
 
 export interface UpdateStoreProfilePayload {
@@ -22,6 +24,7 @@ export interface UpdateStoreProfilePayload {
   address?: string
   billNoPrefix: string
   billFooter?: string
+  currency?: CurrencyCode
 }
 
 export async function fetchStoreProfile(): Promise<StoreProfile> {
@@ -106,6 +109,7 @@ export interface BillingSettings {
   cashierMaxBillDiscountPercent: number
   allowHoldBill: boolean
   allowCreditSales: boolean
+  taxEnabled: boolean
   showCashierOnReceipt: boolean
   showGstBreakupOnReceipt: boolean
   showCustomerOnReceipt: boolean

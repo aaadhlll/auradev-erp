@@ -24,13 +24,17 @@ import {
   type TenantUser, type UserRole, type UserStatus,
 } from '@/lib/users-api'
 import { useAuth } from '@/lib/auth-context'
+import { fetchModuleAccess, updateModuleAccess } from '@/lib/module-access-api'
+import { MERCANTILE_MODULES, type ModuleId } from '@/lib/modules'
+import { setCurrency, type CurrencyCode } from '@/lib/erp-data'
 
-const SETTINGS_NAV: { id: SettingsSectionId; label: string; icon: string }[] = [
-  { id: 'store', label: 'Store Profile', icon: 'store' },
-  { id: 'billing', label: 'Billing & POS', icon: 'scan-line' },
-  { id: 'printer', label: 'Printer Settings', icon: 'printer' },
-  { id: 'users', label: 'User Management', icon: 'users' },
-  { id: 'audit', label: 'Audit Log', icon: 'scroll-text' },
+export const SETTINGS_NAV: { id: SettingsSectionId; label: string; description: string; icon: string }[] = [
+  { id: 'store', label: 'Store profile', description: 'Identity, contact and receipt details', icon: 'store' },
+  { id: 'billing', label: 'Billing & POS', description: 'Checkout rules, discounts and tax', icon: 'scan-line' },
+  { id: 'printer', label: 'Receipt output', description: 'Printer, copies and print behavior', icon: 'printer' },
+  { id: 'users', label: 'Team access', description: 'Users, roles and sign-in access', icon: 'users' },
+  { id: 'modules', label: 'Module access', description: 'Choose workspaces for every role', icon: 'layout-grid' },
+  { id: 'audit', label: 'Activity log', description: 'Review important system events', icon: 'scroll-text' },
 ]
 
 function SaveBar({ onSave, onReset, saving }: { onSave: () => void; onReset: () => void; saving?: boolean }) {
@@ -57,6 +61,7 @@ function StoreProfile() {
     prefix: '',
     footer: '',
     stateCode: '29',
+    currency: 'QAR' as CurrencyCode,
   })
   const [saving, setSaving] = useState(false)
   const [uploading, setUploading] = useState(false)
@@ -72,6 +77,7 @@ function StoreProfile() {
       prefix: profile.billNoPrefix,
       footer: profile.billFooter ?? '',
       stateCode: profile.stateCode,
+      currency: profile.currency,
     })
   }, [profile])
 
@@ -91,7 +97,9 @@ function StoreProfile() {
         billNoPrefix: f.prefix.trim(),
         billFooter: f.footer.trim() || undefined,
         stateCode: f.stateCode.trim() || undefined,
+        currency: f.currency,
       })
+      setCurrency(f.currency)
       invalidate()
       toast('Store profile saved')
     } catch (e) {
@@ -145,7 +153,7 @@ function StoreProfile() {
         <div className="form-grid-2" style={{ flex: 1 }}>
           <div style={{ gridColumn: '1/-1' }}><Field label="Store name" required><TextInput value={f.name} onChange={set('name')} disabled={!canEdit} /></Field></div>
           <Field label="Phone"><TextInput value={f.phone} onChange={set('phone')} icon="phone" disabled={!canEdit} /></Field>
-          <Field label="GSTIN"><TextInput value={f.gstin} onChange={set('gstin')} disabled={!canEdit} /></Field>
+          <Field label="Commercial registration / TIN" hint="Qatar CR or Tax Identification Number"><TextInput value={f.gstin} onChange={set('gstin')} disabled={!canEdit} /></Field>
         </div>
       </div>
       <div className="form-grid-2">
@@ -158,6 +166,10 @@ function StoreProfile() {
         </div>
         <Field label="Bill number prefix" hint="Bills format as NJK-2025-00001"><TextInput value={f.prefix} onChange={set('prefix')} disabled={!canEdit} /></Field>
         <Field label="Bill footer message"><TextInput value={f.footer} onChange={set('footer')} disabled={!canEdit} /></Field>
+        <Field label="Currency" hint="Used across POS, receipts and reports">
+          <Select value={f.currency} onChange={value => setF(current => ({ ...current, currency: value as CurrencyCode }))} disabled={!canEdit}
+            options={[{ value: 'QAR', label: 'Qatari Riyal (QAR)' }, { value: 'INR', label: 'Indian Rupee (INR)' }]} />
+        </Field>
       </div>
       {canEdit ? (
       <SaveBar
@@ -170,6 +182,7 @@ function StoreProfile() {
           prefix: profile.billNoPrefix,
           footer: profile.billFooter ?? '',
           stateCode: profile.stateCode,
+          currency: profile.currency,
         })}
         saving={saving}
       />
@@ -273,7 +286,7 @@ function UserManagement() {
   const [open, setOpen] = useState(false)
   const [editUser, setEditUser] = useState<TenantUser | null>(null)
   const roleTone: Record<string, string> = {
-    TENANT_ADMIN: 'primary', MANAGER: 'info', CASHIER: 'neutral', INVENTORY_STAFF: 'success', ACCOUNTANT: 'warning',
+    TENANT_ADMIN: 'primary', MANAGER: 'info', CASHIER: 'neutral', INVENTORY_STAFF: 'success', PROCUREMENT_STAFF: 'info', ACCOUNTANT: 'warning',
   }
 
   async function handleCreate(payload: { name: string; email: string; role: UserRole; password: string }) {
@@ -336,6 +349,101 @@ function UserManagement() {
   )
 }
 
+function ModuleAccessSettings() {
+  const toast = useToast()
+  const [matrix, setMatrix] = useState<Partial<Record<UserRole, ModuleId[]>>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    fetchModuleAccess()
+      .then(data => {
+        const next: Partial<Record<UserRole, ModuleId[]>> = {}
+        for (const role of ASSIGNABLE_ROLES) {
+          next[role.value] = (data.roles[role.value] ?? []).map(module => module.toLowerCase() as ModuleId)
+        }
+        setMatrix(next)
+      })
+      .catch(e => toast(e instanceof Error ? e.message : 'Could not load module access', { tone: 'danger' }))
+      .finally(() => setLoading(false))
+  }, [toast])
+
+  function toggle(role: UserRole, module: ModuleId, enabled: boolean) {
+    if (role === 'TENANT_ADMIN' && module === 'administration') return
+    setMatrix(current => {
+      const modules = new Set(current[role] ?? [])
+      if (enabled) modules.add(module)
+      else modules.delete(module)
+      return { ...current, [role]: [...modules] }
+    })
+  }
+
+  function roleSupports(role: UserRole, module: ModuleId) {
+    const supported: Partial<Record<UserRole, ModuleId[]>> = {
+      TENANT_ADMIN: ['overview', 'pos', 'inventory', 'procurement', 'administration'],
+      MANAGER: ['overview', 'pos', 'inventory', 'procurement', 'administration'],
+      CASHIER: ['overview', 'pos', 'inventory', 'administration'],
+      INVENTORY_STAFF: ['overview', 'inventory', 'procurement'],
+      PROCUREMENT_STAFF: ['procurement'],
+      ACCOUNTANT: ['overview', 'pos', 'inventory', 'procurement', 'administration'],
+    }
+    return (supported[role] ?? []).includes(module)
+  }
+
+  async function save() {
+    setSaving(true)
+    try {
+      const saved = await updateModuleAccess(matrix)
+      const next: Partial<Record<UserRole, ModuleId[]>> = {}
+      for (const role of ASSIGNABLE_ROLES) {
+        next[role.value] = (saved.roles[role.value] ?? []).map(module => module.toLowerCase() as ModuleId)
+      }
+      setMatrix(next)
+      toast('Module access updated — affected users will see it on their next session')
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not update module access', { tone: 'danger' })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card title="Module Access" sub="Choose which Mercantile workspaces each role can enter" noBody>
+      {loading ? <div style={{ padding: 16 }} className="muted">Loading module access…</div> : (
+        <div className="tbl-wrap">
+          <table className="tbl">
+            <thead><tr><th>Role</th>{MERCANTILE_MODULES.map(module => <th key={module.id}>{module.label}</th>)}</tr></thead>
+            <tbody>
+              {ASSIGNABLE_ROLES.map(role => (
+                <tr key={role.value}>
+                  <td className="td-strong">{role.label}</td>
+                  {MERCANTILE_MODULES.map(module => {
+                    const unsupported = !roleSupports(role.value, module.id)
+                    const locked = unsupported || (role.value === 'TENANT_ADMIN' && module.id === 'administration')
+                    return <td key={module.id}>
+                      <Switch
+                        checked={(matrix[role.value] ?? []).includes(module.id)}
+                        onChange={value => toggle(role.value, module.id, value)}
+                        disabled={locked || saving}
+                      />
+                    </td>
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+        <span className="td-sub">Tenant Admin always retains Administration access.</span>
+        <Button variant="primary" size="sm" icon="check" onClick={() => void save()} disabled={loading || saving}>
+          {saving ? 'Saving…' : 'Save access'}
+        </Button>
+      </div>
+    </Card>
+  )
+}
+
 function BillingSettings() {
   const toast = useToast()
   const { user } = useAuth()
@@ -348,6 +456,7 @@ function BillingSettings() {
     cashierMaxBillDiscountPercent: '5',
     allowHoldBill: true,
     allowCreditSales: true,
+    taxEnabled: false,
     showCashierOnReceipt: true,
     showGstBreakupOnReceipt: true,
     showCustomerOnReceipt: true,
@@ -363,6 +472,7 @@ function BillingSettings() {
       cashierMaxBillDiscountPercent: String(settings.cashierMaxBillDiscountPercent),
       allowHoldBill: settings.allowHoldBill,
       allowCreditSales: settings.allowCreditSales,
+      taxEnabled: settings.taxEnabled,
       showCashierOnReceipt: settings.showCashierOnReceipt,
       showGstBreakupOnReceipt: settings.showGstBreakupOnReceipt,
       showCustomerOnReceipt: settings.showCustomerOnReceipt,
@@ -380,6 +490,7 @@ function BillingSettings() {
         cashierMaxBillDiscountPercent: Number(f.cashierMaxBillDiscountPercent),
         allowHoldBill: f.allowHoldBill,
         allowCreditSales: f.allowCreditSales,
+        taxEnabled: f.taxEnabled,
         showCashierOnReceipt: f.showCashierOnReceipt,
         showGstBreakupOnReceipt: f.showGstBreakupOnReceipt,
         showCustomerOnReceipt: f.showCustomerOnReceipt,
@@ -393,6 +504,16 @@ function BillingSettings() {
       setSaving(false)
     }
   }
+
+  const toggleRows: { key: 'allowHoldBill' | 'allowCreditSales' | 'taxEnabled' | 'showCashierOnReceipt' | 'showGstBreakupOnReceipt' | 'showCustomerOnReceipt' | 'roundTotalToRupee'; title: string; sub: string }[] = [
+    { key: 'allowHoldBill', title: 'Allow bill hold', sub: 'Cashiers can park carts as held bills' },
+    { key: 'allowCreditSales', title: 'Allow credit (khata) sales', sub: 'Registered customers can pay on credit at POS' },
+    { key: 'taxEnabled', title: 'Enable tax calculation', sub: 'Turn on only when tax applies to this store' },
+    { key: 'showCashierOnReceipt', title: 'Show cashier on receipt', sub: 'Prints cashier name on bills' },
+    { key: 'showCustomerOnReceipt', title: 'Show customer on receipt', sub: 'Customer name on printed bill' },
+    { key: 'roundTotalToRupee', title: 'Round grand total to rupee', sub: 'Drop paise on final total' },
+  ]
+  if (f.taxEnabled) toggleRows.splice(4, 0, { key: 'showGstBreakupOnReceipt', title: 'Show tax breakdown', sub: 'Separate tax lines on receipt' })
 
   return (
     <Card title="Billing & POS" sub="Discount limits, credit sales, receipt content, and counter behaviour">
@@ -410,14 +531,7 @@ function BillingSettings() {
         </Field>
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 16 }}>
-        {([
-          ['allowHoldBill', 'Allow bill hold', 'Cashiers can park carts as held bills'],
-          ['allowCreditSales', 'Allow credit (khata) sales', 'Registered customers can pay on credit at POS'],
-          ['showCashierOnReceipt', 'Show cashier on receipt', 'Prints cashier name on bills'],
-          ['showGstBreakupOnReceipt', 'Show CGST/SGST breakup', 'Separate tax lines on receipt'],
-          ['showCustomerOnReceipt', 'Show customer on receipt', 'Customer name on printed bill'],
-          ['roundTotalToRupee', 'Round grand total to rupee', 'Drop paise on final total'],
-        ] as const).map(([key, title, sub]) => (
+        {toggleRows.map(({ key, title, sub }) => (
           <div key={key} className="row" style={{ justifyContent: 'space-between', padding: '11px 4px', borderBottom: '1px solid var(--border)' }}>
             <div>
               <div style={{ fontWeight: 600, fontSize: 13.5 }}>{title}</div>
@@ -434,6 +548,7 @@ function BillingSettings() {
           cashierMaxBillDiscountPercent: String(settings.cashierMaxBillDiscountPercent),
           allowHoldBill: settings.allowHoldBill,
           allowCreditSales: settings.allowCreditSales,
+          taxEnabled: settings.taxEnabled,
           showCashierOnReceipt: settings.showCashierOnReceipt,
           showGstBreakupOnReceipt: settings.showGstBreakupOnReceipt,
           showCustomerOnReceipt: settings.showCustomerOnReceipt,
@@ -535,7 +650,7 @@ function GstSchemeSettings() {
       invalidate()
       toast('GST scheme saved')
     } catch (e) {
-      toast(e instanceof Error ? e.message : 'Could not save GST settings', { tone: 'danger' })
+      toast(e instanceof Error ? e.message : 'Could not save tax settings', { tone: 'danger' })
     } finally {
       setSaving(false)
     }
@@ -556,9 +671,9 @@ function GstSchemeSettings() {
   }
 
   return (
-    <Card title="GST billing scheme" sub="Choose how tax is calculated on POS bills and receipts">
-      {isLoading && <p className="muted">Loading GST settings…</p>}
-      {error && <p className="muted" style={{ color: 'var(--danger)' }}>Could not load GST settings.</p>}
+    <Card title="Tax calculation" sub="Qatar stores can keep this at 0% until a tax rule applies.">
+      {isLoading && <p className="muted">Loading tax settings…</p>}
+      {error && <p className="muted" style={{ color: 'var(--danger)' }}>Could not load tax settings.</p>}
       <Field label="Billing scheme" hint={GST_SCHEME_HINTS[f.scheme]}>
         <Segmented
           value={f.scheme}
@@ -582,7 +697,7 @@ function GstSchemeSettings() {
         ))}
       </div>
       <div style={{ marginBottom: 16 }}>
-        <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>Enabled GST rates</div>
+        <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>Enabled tax rates</div>
         <div className="chips" style={{ marginBottom: 10 }}>
           {RATE_OPTIONS.map(rate => (
             <button
@@ -632,7 +747,7 @@ function GstSchemeSettings() {
       </div>
       {f.scheme === 'COMPOSITE' && (
         <div className="form-grid-2" style={{ marginBottom: 16 }}>
-          <Field label="Composite GST %" hint="Single rate applied on the bill total">
+          <Field label="Composite tax %" hint="Single rate applied on the bill total">
             <Select
               value={f.compositeRatePct}
               onChange={v => setF(s => ({ ...s, compositeRatePct: v }))}
@@ -654,7 +769,7 @@ function GstSchemeSettings() {
               />
             </Field>
           </div>
-          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>Category GST mapping</div>
+          <div style={{ fontSize: 12.5, fontWeight: 600, marginBottom: 8 }}>Category tax mapping</div>
           {categoriesQuery.isPending && <p className="muted">Loading categories…</p>}
           {!categoriesQuery.isPending && categories.length === 0 && (
             <p className="muted">No categories found — import products or add categories first.</p>
@@ -681,7 +796,7 @@ function GstSchemeSettings() {
       )}
       <div className="row" style={{ justifyContent: 'space-between', padding: '11px 4px', borderTop: '1px solid var(--border)', marginBottom: 8 }}>
         <div>
-          <div style={{ fontWeight: 600, fontSize: 13.5 }}>Prices include GST</div>
+          <div style={{ fontWeight: 600, fontSize: 13.5 }}>Prices include tax</div>
           <div className="td-sub">Selling prices are tax-inclusive (MRP style)</div>
         </div>
         <Switch checked={f.priceIncludesTax} onChange={v => setF(s => ({ ...s, priceIncludesTax: v }))} disabled={!canEdit} />
@@ -689,7 +804,7 @@ function GstSchemeSettings() {
       {canEdit ? (
         <SaveBar onSave={() => void save()} onReset={resetForm} saving={saving} />
       ) : (
-        <p className="muted" style={{ marginTop: 8 }}>Read-only — contact a tenant admin to change GST rules.</p>
+        <p className="muted" style={{ marginTop: 8 }}>Read-only — contact a tenant admin to change tax rules.</p>
       )}
     </Card>
   )
@@ -810,11 +925,21 @@ function AuditLog() {
   )
 }
 
-export function Settings() {
+export function Settings({ section: controlledSection, onSectionChange }: {
+  section?: SettingsSectionId
+  onSectionChange?: (section: SettingsSectionId) => void
+} = {}) {
   const { user } = useAuth()
   const visibleNav = SETTINGS_NAV.filter(s => canAccessSettingsSection(user, s.id))
-  const [sec, setSec] = useState<SettingsSectionId>('store')
+  const [localSection, setLocalSection] = useState<SettingsSectionId>('store')
+  const sec = controlledSection ?? localSection
+  const setSec = (next: SettingsSectionId) => {
+    if (controlledSection === undefined) setLocalSection(next)
+    onSectionChange?.(next)
+  }
   const { data: profile } = useStoreProfileQuery()
+  const { data: billingSettings } = useBillingSettingsQuery()
+  const selected = visibleNav.find(item => item.id === sec) ?? visibleNav[0]
 
   useEffect(() => {
     if (visibleNav.length && !visibleNav.some(s => s.id === sec)) {
@@ -823,36 +948,29 @@ export function Settings() {
   }, [user, visibleNav, sec])
 
   return (
-    <div className="content-pad page-shell narrow">
-      <div style={{ marginBottom: 18 }}>
-        <div className="section-title">Settings</div>
-        <div className="section-sub">
-          Configure {profile?.name ?? 'your store'}
-          {profile?.tenantId ? <> · Tenant <span className="mono">{profile.tenantId.slice(0, 8)}</span></> : null}
-        </div>
-      </div>
-      <div className="settings-layout">
-        <div className="settings-nav">
-          {visibleNav.map(s => (
-            <button key={s.id} className={'sb-nav' + (sec === s.id ? ' active' : '')} onClick={() => setSec(s.id)} style={{ marginBottom: 2 }}>
-              <Icon name={s.icon} size={17} className="ic" /><span className="sb-txt">{s.label}</span>
-            </button>
-          ))}
-        </div>
+    <div className="content-pad page-shell administration-page">
+      <header className="admin-page-heading">
         <div>
+          <div className="section-title">Settings</div>
+          <div className="section-sub">Configure {profile?.name ?? 'your store'}{profile?.tenantId ? <> · Tenant <span className="mono">{profile.tenantId.slice(0, 8)}</span></> : null}</div>
+        </div>
+        {user?.role && <Badge tone="primary">{formatRoleLabel(user.role)}</Badge>}
+      </header>
+      <div className="administration-layout">
+        <main className="administration-stage">
+          {selected && <div className="admin-stage-heading"><div><h2>{selected.label}</h2><p>{selected.description}</p></div></div>}
           {sec === 'store' && canAccessSettingsSection(user, 'store') && <StoreProfile />}
           {sec === 'billing' && canAccessSettingsSection(user, 'billing') && (
             <>
               <BillingSettings />
-              <div style={{ marginTop: 16 }}>
-                <GstSchemeSettings />
-              </div>
+              {billingSettings?.taxEnabled && <div style={{ marginTop: 16 }}><GstSchemeSettings /></div>}
             </>
           )}
           {sec === 'printer' && canAccessSettingsSection(user, 'printer') && <PrinterSettings />}
           {sec === 'users' && canAccessSettingsSection(user, 'users') && <UserManagement />}
+          {sec === 'modules' && canAccessSettingsSection(user, 'modules') && <ModuleAccessSettings />}
           {sec === 'audit' && canAccessSettingsSection(user, 'audit') && <AuditLog />}
-        </div>
+        </main>
       </div>
     </div>
   )

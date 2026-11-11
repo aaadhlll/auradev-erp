@@ -1,5 +1,6 @@
 import type { SavedBill } from './billing-api'
 import { gstSchemeShortLabel, isBillLevelGstScheme } from './gst'
+import { money2 } from './erp-data'
 
 export interface ReceiptMeta {
   storeName?: string
@@ -15,8 +16,11 @@ export interface ReceiptPrintOptions {
   showLogo?: boolean
   copies?: number
   showCashier?: boolean
+  showTax?: boolean
   showGstBreakup?: boolean
   showCustomer?: boolean
+  /** Label used for generated documents such as a sales return note. */
+  documentLabel?: string
 }
 
 export const DEFAULT_RECEIPT_PRINT: ReceiptPrintOptions = {
@@ -24,6 +28,7 @@ export const DEFAULT_RECEIPT_PRINT: ReceiptPrintOptions = {
   showLogo: true,
   copies: 1,
   showCashier: true,
+  showTax: false,
   showGstBreakup: true,
   showCustomer: true,
 }
@@ -34,12 +39,8 @@ export const DEFAULT_RECEIPT_META: ReceiptMeta = {
   logoUrl: '/logo.jpeg',
 }
 
-function money(n: number): string {
-  return '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-}
-
 function formatDate(iso: string): string {
-  return new Date(iso).toLocaleString('en-IN', {
+  return new Date(iso).toLocaleString('en-QA', {
     day: 'numeric', month: 'short', year: 'numeric',
     hour: 'numeric', minute: '2-digit',
   })
@@ -50,13 +51,13 @@ function receiptLines(bill: SavedBill, meta: ReceiptMeta, options: ReceiptPrintO
     meta.storeName ?? DEFAULT_RECEIPT_META.storeName!,
     meta.storePhone ?? DEFAULT_RECEIPT_META.storePhone!,
   ]
-  if (meta.gstin) lines.push(`GSTIN: ${meta.gstin}`)
+  if (meta.gstin) lines.push(`CR / TIN: ${meta.gstin}`)
   if (meta.address) lines.push(meta.address)
   lines.push(
     '--------------------------------',
-    `Bill  ${bill.billNo}`,
+    `${options.documentLabel ?? 'Bill'}  ${bill.billNo}`,
     formatDate(bill.createdAt),
-    `GST scheme: ${gstSchemeShortLabel(bill.gstScheme)}`,
+    ...(options.showTax === true ? [`Tax scheme: ${gstSchemeShortLabel(bill.gstScheme)}`] : []),
   )
   if (options.showCustomer !== false) lines.push(`Customer: ${bill.customerName}`)
   if (options.showCashier !== false) lines.push(`Cashier: ${bill.cashierName}`)
@@ -64,38 +65,38 @@ function receiptLines(bill: SavedBill, meta: ReceiptMeta, options: ReceiptPrintO
   const billLevelGst = isBillLevelGstScheme(bill.gstScheme)
   for (const line of bill.lines) {
     lines.push(line.name)
-    if (billLevelGst) {
-      lines.push(`  ${line.quantity} ${line.unitLabel} x ${money(line.unitPrice)}  ${money(line.lineTotal)}`)
+    if (billLevelGst || options.showTax !== true) {
+      lines.push(`  ${line.quantity} ${line.unitLabel} x ${money2(line.unitPrice)}  ${money2(line.lineTotal)}`)
     } else {
-      lines.push(`  ${line.quantity} ${line.unitLabel} x ${money(line.unitPrice)} @${line.gstRate}%  ${money(line.lineTotal)}`)
+      lines.push(`  ${line.quantity} ${line.unitLabel} x ${money2(line.unitPrice)} @${line.gstRate}%  ${money2(line.lineTotal)}`)
     }
   }
   lines.push('--------------------------------')
-  lines.push(`Subtotal${' '.repeat(18)}${money(bill.subtotal)}`)
+  lines.push(`Subtotal${' '.repeat(18)}${money2(bill.subtotal)}`)
   if (bill.billDiscount > 0) {
-    lines.push(`Discount${' '.repeat(18)}-${money(bill.billDiscount)}`)
+    lines.push(`Discount${' '.repeat(18)}-${money2(bill.billDiscount)}`)
   }
-  if (options.showGstBreakup !== false) {
+  if (options.showTax === true && options.showGstBreakup !== false) {
     if (bill.gstSlabs.length > 0) {
       for (const slab of bill.gstSlabs) {
         const label = billLevelGst
           ? `Composite ${slab.ratePct}%`
           : `GST ${slab.ratePct}%`
-        lines.push(`${label}${' '.repeat(Math.max(1, 20 - label.length))}${money(slab.taxAmount)}`)
+        lines.push(`${label}${' '.repeat(Math.max(1, 20 - label.length))}${money2(slab.taxAmount)}`)
       }
     }
-    lines.push(`CGST${' '.repeat(20)}${money(bill.cgstTotal)}`)
-    lines.push(`SGST${' '.repeat(20)}${money(bill.sgstTotal)}`)
-  } else if (bill.cgstTotal + bill.sgstTotal > 0) {
-    lines.push(`GST${' '.repeat(21)}${money(bill.cgstTotal + bill.sgstTotal)}`)
+    lines.push(`CGST${' '.repeat(20)}${money2(bill.cgstTotal)}`)
+    lines.push(`SGST${' '.repeat(20)}${money2(bill.sgstTotal)}`)
+  } else if (options.showTax === true && bill.cgstTotal + bill.sgstTotal > 0) {
+    lines.push(`GST${' '.repeat(21)}${money2(bill.cgstTotal + bill.sgstTotal)}`)
   }
-  lines.push(`TOTAL${' '.repeat(19)}${money(bill.grandTotal)}`)
+  lines.push(`TOTAL${' '.repeat(19)}${money2(bill.grandTotal)}`)
   lines.push(`Paid via ${bill.paymentMethod}`)
   if (bill.tendered != null) {
-    lines.push(`Tendered${' '.repeat(17)}${money(bill.tendered)}`)
+    lines.push(`Tendered${' '.repeat(17)}${money2(bill.tendered)}`)
   }
   if (bill.changeDue != null && bill.changeDue > 0) {
-    lines.push(`Change${' '.repeat(19)}${money(bill.changeDue)}`)
+    lines.push(`Change${' '.repeat(19)}${money2(bill.changeDue)}`)
   }
   lines.push('--------------------------------')
   lines.push(meta.billFooter?.trim() || 'Thank you! Visit again.')

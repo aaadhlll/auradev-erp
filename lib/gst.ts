@@ -22,19 +22,19 @@ export const GST_SCHEME_LABELS: Record<GstScheme, string> = {
 }
 
 export const GST_SCHEME_HINTS: Record<GstScheme, string> = {
-  PRODUCT: 'Each line uses the GST % on the product master — standard for detailed GST invoices with per-HSN rates.',
-  COMPOSITE: 'One GST % on the bill total after discounts — matches GST composition scheme (not per line).',
-  CATEGORY: 'GST % from category mapping (e.g. Grains 5%, Snacks 18%) — applied per line by category.',
+  PRODUCT: 'Each line uses the tax rate on the product master. Keep it at 0% where no tax applies.',
+  COMPOSITE: 'One tax rate is applied on the bill total after discounts, instead of per line.',
+  CATEGORY: 'A tax rate from category mapping is applied per line.',
 }
 
 export const GST_SCHEME_GUIDE: { title: string; body: string }[] = [
   {
     title: 'When to use product-wise',
-    body: 'Default for registered stores issuing proper tax invoices. Each SKU keeps its own GST % aligned with HSN (standard slabs plus any custom rates you enable).',
+    body: 'Use this when each SKU has its own tax rate. For Qatar stores without a current applicable tax, use 0%.',
   },
   {
     title: 'When to use composite',
-    body: 'GST composition scheme: pick one rate and apply it once on the taxable bill total (after line and bill discounts), not on each item.',
+    body: 'Pick one rate and apply it once on the taxable bill total, after line and bill discounts.',
   },
   {
     title: 'When to use category-wise',

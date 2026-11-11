@@ -31,14 +31,14 @@ export function formatAuditAction(entry: AuditEntry): string {
     case 'USER_UPDATED':
       return `User updated: ${m.email ?? 'user'} · ${String(m.status ?? '').toLowerCase()}`
     case 'BILL_CREATED':
-      return `Bill ${m.billNo ?? ''} · ₹${Number(m.grandTotal ?? 0).toLocaleString('en-IN')} · ${m.customer ?? 'customer'}`
+      return `Bill ${m.billNo ?? ''} · QAR ${Number(m.grandTotal ?? 0).toLocaleString('en-QA')} · ${m.customer ?? 'customer'}`
     default:
       return entry.action.replace(/_/g, ' ').toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
   }
 }
 
 export function formatAuditTime(iso: string): string {
-  return new Date(iso).toLocaleString('en-IN', {
+  return new Date(iso).toLocaleString('en-QA', {
     day: 'numeric', month: 'short', year: 'numeric',
     hour: 'numeric', minute: '2-digit',
   })

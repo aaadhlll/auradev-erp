@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
-import { Icon, Button, Badge, Field, TextInput, Select, Segmented, Modal, IconTile, useToast, Tabs } from './ui'
+import { Icon, Button, Badge, Field, TextInput, Segmented, Modal, IconTile, useToast, Tabs, useClickOutside } from './ui'
 import { CAT_TONE, CAT_ICON, stockStatus, money, money2, type Product } from '@/lib/erp-data'
 import { resolveProductScan, fetchProduct } from '@/lib/inventory-api'
 import {
@@ -27,24 +27,26 @@ import { usePosSearchQuery } from '@/lib/queries/use-pos-search'
 import { usePosQuickPicksQuery, useInvalidatePos } from '@/lib/queries/use-pos-quick-picks'
 import { ConfirmDeleteModal } from './confirm-delete-modal'
 import { CustomerFormModal } from './customer-form-modal'
+import { CustomerCreditPaymentModal } from './customer-credit-payment-modal'
+import { hasPermission } from '@/lib/permissions'
 import { useHeldBillsQuery, useInvalidateHeldBills } from '@/lib/queries/use-held-bills'
 import { mergeQuickPicks, pushPosRecent, readPosRecents } from '@/lib/pos-recent'
 
 interface CartItem { p: Product; qty: number; disc: number }
 
-function ProductCard({ p, onAdd, dense }: { p: Product; onAdd: (p: Product) => void; dense: boolean }) {
+function ProductCard({ p, onAdd, dense }: { p: Product; onAdd: (p: Product) => Promise<boolean>; dense: boolean }) {
   const st = stockStatus(p)
   const out = st === 'out'
   return (
     <button
       className="prod-card"
       disabled={out}
-      onClick={() => onAdd(p)}
+      onClick={() => { void onAdd(p) }}
       style={out ? { opacity: .55, cursor: 'not-allowed' } : undefined}
     >
       <div className="row" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
         <IconTile tone={CAT_TONE[p.cat] ?? 'tile-primary'} size={dense ? 26 : 30} icon={CAT_ICON[p.cat] ?? 'package'} iconSize={dense ? 14 : 16} />
-        {st === 'low' && <Badge tone="warning">{p.stock}{p.unit === 'kg' ? 'kg' : ''}</Badge>}
+        {st === 'low' && <Badge tone="warning">{p.stock} {p.unit === 'kg' ? 'kg' : 'left'}</Badge>}
         {out && <Badge tone="danger">Out</Badge>}
       </div>
       <div className="pc-name">{p.name}</div>
@@ -53,6 +55,91 @@ function ProductCard({ p, onAdd, dense }: { p: Product; onAdd: (p: Product) => v
         <span className="pc-sku mono">{p.sku.split('-').slice(-1)[0]}</span>
       </div>
     </button>
+  )
+}
+
+function CustomerPicker({
+  customers,
+  value,
+  onChange,
+  onInteract,
+}: {
+  customers: ApiCustomer[]
+  value: string
+  onChange: (id: string) => void
+  onInteract: () => void
+}) {
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const wrap = useRef<HTMLDivElement>(null)
+  const selected = customers.find(customer => customer.id === value)
+  const normalizedQuery = query.trim().toLocaleLowerCase()
+  const matches = customers.filter(customer => {
+    if (!normalizedQuery) return true
+    return [customer.name, customer.phone ?? ''].some(field => field.toLocaleLowerCase().includes(normalizedQuery))
+  })
+
+  useEffect(() => {
+    if (!open) setQuery(selected?.name ?? '')
+  }, [open, selected?.name])
+
+  useClickOutside(wrap, () => setOpen(false), open)
+
+  function choose(customer: ApiCustomer) {
+    onChange(customer.id)
+    setQuery(customer.name)
+    setOpen(false)
+  }
+
+  return (
+    <div ref={wrap} style={{ position: 'relative', width: '100%' }}>
+      <div className="input" style={{ cursor: 'text' }}>
+        <Icon name="search" size={16} />
+        <input
+          aria-label="Search customer"
+          value={query}
+          placeholder="Search customer by name or phone"
+          onFocus={() => { onInteract(); setOpen(true); setQuery('') }}
+          onChange={event => { setQuery(event.target.value); setOpen(true) }}
+          onKeyDown={event => {
+            if (event.key === 'Enter' && matches[0]) {
+              event.preventDefault()
+              choose(matches[0])
+            }
+          }}
+        />
+        {selected && !open && <Icon name={selected.type === 'b2b' ? 'building-2' : 'user-round'} size={16} />}
+      </div>
+      {open && (
+        <div className="popover" style={{ position: 'absolute', top: 'calc(100% + 5px)', left: 0, width: '100%', maxWidth: 'none' }}>
+          {matches.length ? matches.map(customer => (
+            <button
+              key={customer.id}
+              type="button"
+              className={'menu-item' + (customer.id === value ? ' active' : '')}
+              onMouseDown={event => event.preventDefault()}
+              onClick={() => choose(customer)}
+            >
+              <Icon name={customer.type === 'b2b' ? 'building-2' : 'user-round'} size={16} className="lead" />
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{customer.name}</span>
+                <span className="td-sub" style={{ display: 'block' }}>
+                  {customer.phone || (customer.type === 'walkin' ? 'No profile needed' : 'No phone number')}
+                  {customer.creditBalance > 0 ? ` · Credit due ${money2(customer.creditBalance)}` : ''}
+                </span>
+              </span>
+              {customer.id === value && <Icon name="check" size={15} className="check" />}
+            </button>
+          )) : (
+            <div className="empty" style={{ height: 'auto', padding: '20px 12px' }}>
+              <Icon name="search-x" size={18} />
+              <div>No customer found</div>
+              <div>Try a name or phone number</div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -78,6 +165,9 @@ function PaymentModal({ total, customer, allowCreditSales, onClose, onDone, busy
   const methods = ['Cash', 'UPI', 'Card', 'Split', ...(allowCreditSales ? ['Credit'] : [])]
   const quick = [total, Math.ceil(total / 100) * 100, Math.ceil(total / 500) * 500, 2000]
     .filter((v, i, a) => a.indexOf(v) === i && v >= total).slice(0, 3)
+  const fillExactAmount = () => {
+    if (!tendered) setTendered(total.toFixed(2))
+  }
 
   const canPay = method === 'Cash' ? tend >= total : method === 'Credit' ? Boolean(allowCredit) : true
 
@@ -101,7 +191,16 @@ function PaymentModal({ total, customer, allowCreditSales, onClose, onDone, busy
       {method === 'Cash' && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <Field label="Amount tendered">
-            <TextInput icon="indian-rupee" value={tendered} onChange={setTendered} placeholder="0" type="number" autoFocus />
+            <TextInput
+              icon="indian-rupee"
+              value={tendered}
+              onChange={setTendered}
+              onFocus={fillExactAmount}
+              onClick={fillExactAmount}
+              placeholder="0"
+              type="number"
+              autoFocus
+            />
           </Field>
           <div className="row gap8">
             {quick.map(q => <Button key={q} size="sm" variant="outline" onClick={() => setTendered(String(q))}>{money(q)}</Button>)}
@@ -304,11 +403,12 @@ export function POS({
   const printOptions = useReceiptPrintOptions()
   const billing = billingQuery.data
   const taxSettings = taxQuery.data
+  const taxEnabled = billing?.taxEnabled === true
   const [schemeOverride, setSchemeOverride] = useState<GstScheme | null>(null)
   const canEditGst = canEditSettingsSection(user, 'billing')
   const effectiveTax = useMemo(
-    () => effectiveTaxSettings(taxSettings, schemeOverride),
-    [taxSettings, schemeOverride],
+    () => taxEnabled ? effectiveTaxSettings(taxSettings, schemeOverride) : null,
+    [taxEnabled, taxSettings, schemeOverride],
   )
 
   useEffect(() => {
@@ -354,6 +454,8 @@ export function POS({
   const [discardId, setDiscardId] = useState<string | null>(null)
   const [clearCartOpen, setClearCartOpen] = useState(false)
   const [customerAddOpen, setCustomerAddOpen] = useState(false)
+  const [creditPaymentOpen, setCreditPaymentOpen] = useState(false)
+  const addPendingRef = useRef(new Set<string>())
 
   const searchQuery = usePosSearchQuery(debouncedQ)
   const isSearching = debouncedQ.length >= 2
@@ -428,6 +530,23 @@ export function POS({
     setRecents(readPosRecents())
   }, [])
 
+  // Keep an open cart's stock snapshot current while the POS quick-picks feed
+  // refreshes. The API check in add/setQty below remains the final UI guard.
+  useEffect(() => {
+    const latestById = new Map((quickPicksQuery.data ?? []).map(product => [product.id, product]))
+    if (!latestById.size) return
+    setCart(current => {
+      let changed = false
+      const next = current.map(line => {
+        const latest = latestById.get(line.p.id)
+        if (!latest || latest.stock === line.p.stock) return line
+        changed = true
+        return { ...line, p: { ...line.p, ...latest } }
+      })
+      return changed ? next : current
+    })
+  }, [quickPicksQuery.data])
+
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(searchInput.trim()), 300)
     return () => clearTimeout(t)
@@ -447,39 +566,63 @@ export function POS({
 
   const customer = customers.find(c => c.id === customerId)
 
-  const add = useCallback((p: Product) => {
-    const step = p.unit === 'kg' ? 0.5 : 1
-    setCart(c => {
-      const ex = c.find(x => x.p.id === p.id)
-      const nextQty = ex ? +(ex.qty + step).toFixed(2) : step
-      if (nextQty > p.stock) {
+  const add = useCallback(async (p: Product): Promise<boolean> => {
+    // Ignore repeat clicks until the first stock check has completed. Without
+    // this, two requests could both see an empty cart and add two units.
+    if (addPendingRef.current.has(p.id)) return false
+    addPendingRef.current.add(p.id)
+    try {
+      const latest = await fetchProduct(p.id)
+      const step = latest.unit === 'kg' ? 0.5 : 1
+      const existing = cart.find(x => x.p.id === latest.id)
+      const nextQty = existing ? +(existing.qty + step).toFixed(2) : step
+      if (nextQty > latest.stock) {
         toast(
-          p.stock <= 0
-            ? `${p.name} is out of stock`
-            : `${p.name} — only ${p.stock}${p.unit === 'kg' ? ' kg' : ''} available`,
+          latest.stock <= 0
+            ? `${latest.name} is out of stock`
+            : `${latest.name} — only ${latest.stock}${latest.unit === 'kg' ? ' kg' : ''} available`,
           { icon: 'alert-circle' },
         )
-        return c
+        return false
       }
-      pushPosRecent(p)
+      pushPosRecent(latest)
       setRecents(readPosRecents())
-      if (ex) return c.map(x => x.p.id === p.id ? { ...x, qty: nextQty } : x)
-      return [...c, { p, qty: step === 0.5 ? step : 1, disc: 0 }]
-    })
-  }, [toast])
+      setCart(c => {
+        const ex = c.find(x => x.p.id === latest.id)
+        if (ex) return c.map(x => x.p.id === latest.id ? { ...x, p: { ...x.p, ...latest }, qty: +(x.qty + step).toFixed(2) } : x)
+        return [...c, { p: latest, qty: step === 0.5 ? step : 1, disc: 0 }]
+      })
+      return true
+    } catch {
+      toast(`Could not verify current stock for ${p.name}. Please try again.`, { icon: 'alert-circle' })
+      return false
+    } finally {
+      addPendingRef.current.delete(p.id)
+    }
+  }, [cart, toast])
 
-  const setQty = (id: string, qty: number) =>
-    setCart(c => {
-      const line = c.find(x => x.p.id === id)
-      if (line && qty > line.p.stock) {
-        toast(
-          `${line.p.name} — only ${line.p.stock}${line.p.unit === 'kg' ? ' kg' : ''} available`,
-          { icon: 'alert-circle' },
-        )
-        return c
+  const setQty = async (id: string, qty: number) => {
+    const line = cart.find(x => x.p.id === id)
+    if (!line) return
+    let latest = line.p
+    if (qty > line.qty) {
+      try {
+        latest = await fetchProduct(id)
+      } catch {
+        toast(`Could not verify current stock for ${line.p.name}. Please try again.`, { icon: 'alert-circle' })
+        return
       }
-      return c.map(x => x.p.id === id ? { ...x, qty: Math.max(0, +qty.toFixed(2)) } : x).filter(x => x.qty > 0)
-    })
+    }
+    if (qty > latest.stock) {
+      setCart(current => current.map(x => x.p.id === id ? { ...x, p: { ...x.p, ...latest } } : x))
+      toast(
+        `${latest.name} — only ${latest.stock}${latest.unit === 'kg' ? ' kg' : ''} available`,
+        { icon: 'alert-circle' },
+      )
+      return
+    }
+    setCart(c => c.map(x => x.p.id === id ? { ...x, p: { ...x.p, ...latest }, qty: Math.max(0, +qty.toFixed(2)) } : x).filter(x => x.qty > 0))
+  }
   const remove = (id: string) => setCart(c => c.filter(x => x.p.id !== id))
 
   async function onBarcode(e: React.KeyboardEvent<HTMLInputElement>) {
@@ -490,8 +633,7 @@ export function POS({
     setScanBusy(true)
     try {
       const p = await resolveProductScan(code)
-      add(p)
-      toast(p.name + ' added')
+      if (await add(p)) toast(p.name + ' added')
     } catch {
       toast(`No product for "${code}"`, { icon: 'search-x', tone: '' })
     } finally {
@@ -526,7 +668,7 @@ export function POS({
       customerId,
       discountMode: (discMode === '%' ? 'PERCENT' : 'AMOUNT') as 'AMOUNT' | 'PERCENT',
       billDiscount: billDisc || 0,
-      gstSchemeOverride: schemeOverride ?? undefined,
+      gstSchemeOverride: taxEnabled ? schemeOverride ?? undefined : undefined,
       items: cart.map(x => ({
         productId: x.p.id,
         quantity: x.qty,
@@ -702,17 +844,11 @@ export function POS({
       <div className="pos-cart-head">
         <div className="row gap8" style={{ width: '100%' }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <Select
-              width="100%"
+            <CustomerPicker
+              customers={customers}
               value={customerId}
               onChange={setCustomerId}
-              icon="user-round"
-              options={customers.map(c => ({
-                value: c.id,
-                label: c.name,
-                sub: c.phone || (c.type === 'walkin' ? 'No profile needed' : ''),
-                icon: c.type === 'b2b' ? 'building-2' : 'user-round',
-              }))}
+              onInteract={releaseScanner}
             />
           </div>
           <Button
@@ -723,6 +859,12 @@ export function POS({
             onClick={() => { releaseScanner(); setCustomerAddOpen(true) }}
           />
         </div>
+        {customer && customer.type !== 'walkin' && customer.creditBalance > 0 && hasPermission(user, 'CUSTOMER_CREDIT_SETTLE') && (
+          <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
+            <span className="td-sub">Credit due <strong className="tnum" style={{ color: 'var(--warning-fg)' }}>{money2(customer.creditBalance)}</strong></span>
+            <Button size="sm" variant="outline" icon="wallet-cards" onClick={() => { releaseScanner(); setCreditPaymentOpen(true) }}>Settle credit</Button>
+          </div>
+        )}
         {heldBillId && (
           <div className="pos-parked-tag">
             <Icon name="pause" size={12} />
@@ -745,13 +887,35 @@ export function POS({
               <div className="cl-name">{x.p.name}</div>
               <div className="cl-meta tnum">
                 {money(x.p.price)} × {x.qty}{x.p.unit === 'kg' ? ' kg' : ''}
-                {lineRate != null ? ` · GST ${lineRate}%` : ''}
+                {taxEnabled && lineRate != null ? ` · Tax ${lineRate}%` : ''}
               </div>
             </div>
             <div className="qty">
-              <button onClick={() => setQty(x.p.id, x.qty - (x.p.unit === 'kg' ? 0.5 : 1))}><Icon name="minus" size={13} /></button>
-              <span className="tnum">{x.qty}</span>
-              <button onClick={() => setQty(x.p.id, x.qty + (x.p.unit === 'kg' ? 0.5 : 1))}><Icon name="plus" size={13} /></button>
+              <button onClick={() => { void setQty(x.p.id, x.qty - (x.p.unit === 'kg' ? 0.5 : 1)) }} aria-label={`Decrease ${x.p.name} quantity`}><Icon name="minus" size={13} /></button>
+              <input
+                key={`${x.p.id}:${x.qty}`}
+                className="qty-input tnum"
+                type="number"
+                inputMode="decimal"
+                min={x.p.unit === 'kg' ? '0.01' : '1'}
+                step={x.p.unit === 'kg' ? '0.01' : '1'}
+                defaultValue={x.qty}
+                aria-label={`Quantity for ${x.p.name}`}
+                onFocus={e => { releaseScanner(); e.currentTarget.select() }}
+                onKeyDown={e => { if (e.key === 'Enter') e.currentTarget.blur() }}
+                onBlur={e => {
+                  const typed = Number(e.currentTarget.value)
+                  const validUnit = x.p.unit === 'kg' || Number.isInteger(typed)
+                  if (!Number.isFinite(typed) || typed <= 0 || !validUnit) {
+                    if (typed > 0 && validUnit) void setQty(x.p.id, typed)
+                    else if (typed > 0 && !validUnit) toast('Unit items must use a whole quantity', { icon: 'alert-circle' })
+                    e.currentTarget.value = String(x.qty)
+                    return
+                  }
+                  void setQty(x.p.id, typed)
+                }}
+              />
+              <button onClick={() => { void setQty(x.p.id, x.qty + (x.p.unit === 'kg' ? 0.5 : 1)) }} aria-label={`Increase ${x.p.name} quantity`}><Icon name="plus" size={13} /></button>
             </div>
             <div className="cl-total tnum">{money(x.p.price * x.qty)}</div>
             <button className="cl-rm" onClick={() => remove(x.p.id)} aria-label="Remove"><Icon name="x" size={14} /></button>
@@ -783,12 +947,12 @@ export function POS({
         </div>
         <div className="t-row"><span className="muted">Subtotal</span><span className="tnum">{money2(subtotal)}</span></div>
         {discVal > 0 && <div className="t-row"><span className="muted">Discount</span><span className="tnum" style={{ color: 'var(--success-fg)' }}>−{money2(discVal)}</span></div>}
-        <div className="t-row">
+        {taxEnabled && <div className="t-row">
           <span className="muted">
-            {compositeRate != null ? `GST ${compositeRate}% on bill` : 'GST'}
+            {compositeRate != null ? `Tax ${compositeRate}% on bill` : 'Tax'}
           </span>
           <span className="tnum">{money2(gst)}</span>
-        </div>
+        </div>}
         <div className="divider" style={{ margin: '6px 0' }} />
         <div className="t-row grand"><span>Total</span><span className="tnum">{money2(grand)}</span></div>
         <div className="pos-cart-actions">
@@ -893,8 +1057,8 @@ export function POS({
         </div>
       </div>
 
-      <div className="pos-gst-bar">
-        <Badge tone="info">GST: {gstSchemeShortLabel(effectiveTax?.scheme)}</Badge>
+      {taxEnabled && <div className="pos-gst-bar">
+        <Badge tone="info">Tax: {gstSchemeShortLabel(effectiveTax?.scheme)}</Badge>
         {schemeOverride && (
           <button type="button" className="chip" onClick={() => setSchemeOverride(null)}>Store default</button>
         )}
@@ -913,7 +1077,7 @@ export function POS({
             {effectiveTax?.scheme === 'CATEGORY' ? 'Category rates apply' : 'Set in Settings → Billing'}
           </span>
         )}
-      </div>
+      </div>}
 
       {!isSearching && (
         <div className="pos-picks-head">
@@ -1051,6 +1215,9 @@ export function POS({
             toast('Customer added', { icon: 'user-plus' })
           }}
         />
+      )}
+      {creditPaymentOpen && customer && (
+        <CustomerCreditPaymentModal customer={customer} onClose={() => setCreditPaymentOpen(false)} onSaved={async () => { await customersQuery.refetch(); void invalidateCustomers() }} />
       )}
     </div>
   )

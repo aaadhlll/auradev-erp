@@ -110,6 +110,7 @@ export interface AuthUser {
   lastLoginAt: string | null
   createdAt: string
   permissions: string[]
+  modules?: string[]
 }
 
 export interface LoginResponse {

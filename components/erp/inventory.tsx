@@ -6,9 +6,9 @@ import {
 } from './ui'
 import { CAT_TONE, CAT_ICON, stockStatus, money, type Product } from '@/lib/erp-data'
 import {
-  fetchProduct, createProduct, updateProduct, adjustStock,
+  fetchProduct, createProduct, updateProduct, adjustStock, recordBatchReceipt, fetchProductBatches,
   fetchMovements, movementLabel, downloadProductsExport,
-  type ProductFormData, type ApiCategory, type StockMovement,
+  type ProductFormData, type ApiCategory, type StockMovement, type InventoryBatch,
 } from '@/lib/inventory-api'
 import { computeInventorySummary } from '@/lib/inventory-summary'
 import { useProductsQuery, useCategoriesQuery, useInvalidateCatalog } from '@/lib/queries/use-catalog'
@@ -23,6 +23,17 @@ const STATUS_BADGE = {
   low: { tone: 'warning', label: 'Low Stock' },
   out: { tone: 'danger',  label: 'Out of Stock' },
 } as const
+
+type StockTransaction = 'opening' | 'receipt' | 'adjustment' | 'count' | 'wastage'
+export type InventorySectionId = 'items' | StockTransaction
+
+const TRANSACTION_COPY: Record<StockTransaction, { title: string; description: string; action: string; icon: string }> = {
+  opening: { title: 'Opening stock', description: 'Record the initial stock available when you start using Mercantile.', action: 'Record opening stock', icon: 'package-open' },
+  receipt: { title: 'Stock receipt', description: 'Record stock received outside a purchase order or GRN.', action: 'Record receipt', icon: 'package-check' },
+  adjustment: { title: 'Stock adjustments', description: 'Correct stock differences with a reason and audit note.', action: 'Adjust stock', icon: 'package-plus' },
+  count: { title: 'Physical count', description: 'Enter the counted quantity; Mercantile records the exact difference.', action: 'Save count', icon: 'clipboard-check' },
+  wastage: { title: 'Damage & wastage', description: 'Remove damaged, expired, or wasted items from available stock.', action: 'Record wastage', icon: 'trash-2' },
+}
 
 function RowMenu({ onEdit, onHistory, onAdjust }: {
   onEdit?: () => void
@@ -58,39 +69,42 @@ function RowMenu({ onEdit, onHistory, onAdjust }: {
   )
 }
 
-function AdjustModal({ product, onClose, onSave }: {
+function AdjustModal({ product, mode = 'adjustment', onClose, onSave }: {
   product: Product
+  mode?: StockTransaction
   onClose: () => void
-  onSave: (delta: number, reason: string, notes: string) => void
+  onSave: (delta: number, reason: string, notes: string, batchNumber?: string, expiryDate?: string) => void
 }) {
-  const [type, setType] = useState('add')
+  const config = TRANSACTION_COPY[mode]
+  const [type, setType] = useState(mode === 'wastage' ? 'remove' : 'add')
   const [qty, setQty] = useState('')
-  const [reason, setReason] = useState('grn')
   const [notes, setNotes] = useState('')
+  const [batchNumber, setBatchNumber] = useState('')
+  const [expiryDate, setExpiryDate] = useState('')
   const n = parseFloat(qty) || 0
-  const result = type === 'add' ? product.stock + n : Math.max(0, product.stock - n)
+  const isCount = mode === 'count'
+  const delta = isCount ? n - product.stock : type === 'add' ? n : -n
+  const result = isCount ? n : type === 'add' ? product.stock + n : Math.max(0, product.stock - n)
+  const isBatchReceipt = mode === 'receipt' && product.expiryTracked
+  const valid = n >= 0 && (isCount ? n !== product.stock : n > 0) && (delta >= 0 || product.stock + delta >= 0) && (!isBatchReceipt || Boolean(batchNumber.trim()))
 
   return (
-    <Modal title="Adjust stock" sub={`${product.name} · ${product.sku}`} icon="package-plus" onClose={onClose}
+    <Modal title={config.title} sub={`${product.name} · ${product.sku}`} icon={config.icon} onClose={onClose}
       footer={<>
         <Button variant="ghost" onClick={onClose}>Cancel</Button>
-        <Button variant="primary" icon="check" disabled={n <= 0} onClick={() => onSave(type === 'add' ? n : -n, reason, notes)}>Save adjustment</Button>
+        <Button variant="primary" icon="check" disabled={!valid} onClick={() => onSave(delta, mode, notes, batchNumber, expiryDate)}>{config.action}</Button>
       </>}
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <Segmented value={type} onChange={setType} options={[{ value: 'add', icon: 'plus', label: 'Add stock' }, { value: 'remove', icon: 'minus', label: 'Remove' }]} />
-        <Field label="Quantity" hint={`Current on hand: ${product.stock} ${product.unit}`}>
+        {mode === 'adjustment' && <Segmented value={type} onChange={setType} options={[{ value: 'add', icon: 'plus', label: 'Add stock' }, { value: 'remove', icon: 'minus', label: 'Remove' }]} />}
+        <Field label={isCount ? 'Counted quantity' : 'Quantity'} hint={`Current on hand: ${product.stock} ${product.unit}`}>
           <TextInput type="number" value={qty} onChange={setQty} placeholder="0" icon="hash" autoFocus
             suffix={<span className="muted" style={{ fontSize: 12, fontWeight: 600 }}>{product.unit}</span>} />
         </Field>
-        <Field label="Reason">
-          <Select value={reason} onChange={setReason} options={[
-            { value: 'grn', label: 'Goods received (GRN)', icon: 'truck' },
-            { value: 'damage', label: 'Damage / wastage', icon: 'trash-2' },
-            { value: 'return', label: 'Customer return', icon: 'undo-2' },
-            { value: 'count', label: 'Stock count correction', icon: 'clipboard-check' },
-          ]} />
-        </Field>
+        {isBatchReceipt && <div className="form-grid-2">
+          <Field label="Batch / lot number" required><TextInput value={batchNumber} onChange={setBatchNumber} placeholder="e.g. LOT-241101-A" /></Field>
+          <Field label="Expiry date" hint="Optional for non-dated goods"><TextInput type="date" value={expiryDate} onChange={setExpiryDate} /></Field>
+        </div>}
         <Field label="Notes" optional>
           <div className="input" style={{ height: 'auto' }}>
             <textarea className="bare" value={notes} onChange={e => setNotes(e.target.value)} placeholder="Optional note for the audit log" />
@@ -126,6 +140,7 @@ function moveTone(m: StockMovement): string {
 
 function HistoryDrawer({ product, onClose }: { product: Product; onClose: () => void }) {
   const [moves, setMoves] = useState<StockMovement[]>([])
+  const [batches, setBatches] = useState<InventoryBatch[]>([])
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -134,7 +149,16 @@ function HistoryDrawer({ product, onClose }: { product: Product; onClose: () => 
       .then(setMoves)
       .catch(() => setMoves([]))
       .finally(() => setLoading(false))
+    if (product.expiryTracked) fetchProductBatches(product.id).then(setBatches).catch(() => setBatches([]))
   }, [product.id])
+
+  const expiryLabel = (date: string | null) => {
+    if (!date) return 'No expiry date'
+    const days = Math.ceil((new Date(`${date}T00:00:00`).getTime() - Date.now()) / 86_400_000)
+    if (days < 0) return 'Expired'
+    if (days <= 30) return `Expires in ${days} days`
+    return `Expires ${new Date(`${date}T00:00:00`).toLocaleDateString('en-QA', { day: 'numeric', month: 'short', year: 'numeric' })}`
+  }
 
   return (
     <Drawer title="Movement history" sub={`${product.name} · ${product.sku}`} onClose={onClose}>
@@ -148,6 +172,16 @@ function HistoryDrawer({ product, onClose }: { product: Product; onClose: () => 
           <div className="kpi-val tnum" style={{ fontSize: 22 }}>{product.reorder}</div>
         </div>
       </div>
+      {product.expiryTracked && <div style={{ marginBottom: 20 }}>
+        <div className="row" style={{ justifyContent: 'space-between', marginBottom: 8 }}><div style={{ fontWeight: 700, fontSize: 13 }}>Batches & expiry</div><Badge tone="info">{batches.length} batches</Badge></div>
+        {batches.length === 0 ? <div className="muted" style={{ fontSize: 12.5 }}>No batches have been received for this item yet.</div> : batches.map(batch => {
+          const expiresSoon = batch.expiryDate && Math.ceil((new Date(`${batch.expiryDate}T00:00:00`).getTime() - Date.now()) / 86_400_000) <= 30
+          return <div key={batch.id} className="row" style={{ justifyContent: 'space-between', padding: '9px 0', borderBottom: '1px solid var(--border)' }}>
+            <div><div className="td-strong mono">{batch.batchNumber}</div><div className="td-sub">Received {batch.receivedDate}</div></div>
+            <div style={{ textAlign: 'right' }}><div className="tnum" style={{ fontWeight: 700 }}>{batch.quantityOnHand} {product.unit}</div><div className="td-sub" style={{ color: expiresSoon ? 'var(--warning-fg)' : undefined }}>{expiryLabel(batch.expiryDate)}</div></div>
+          </div>
+        })}
+      </div>}
       {loading ? (
         <div className="muted" style={{ textAlign: 'center', padding: 24, fontSize: 13 }}>Loading movements…</div>
       ) : moves.length === 0 ? (
@@ -184,9 +218,10 @@ function ProductModal({ onClose, onSave, categories, initialProduct }: {
     mrp: initialProduct ? String(initialProduct.mrp) : '',
     price: initialProduct ? String(initialProduct.price) : '',
     cost: initialProduct ? String(initialProduct.cost) : '',
-    tax: initialProduct ? String(initialProduct.tax) : '5',
+    tax: initialProduct ? String(initialProduct.tax) : '0',
     reorder: initialProduct ? String(initialProduct.reorder) : '',
     stock: initialProduct ? String(initialProduct.stock) : '',
+    expiryTracked: initialProduct?.expiryTracked ?? false,
   })
   const [tried, setTried] = useState(false)
   const { data: taxSettings } = useTaxSettingsQuery()
@@ -221,14 +256,72 @@ function ProductModal({ onClose, onSave, categories, initialProduct }: {
           <Select value={f.categoryId} onChange={set('categoryId')} options={categories.map(c => ({ value: c.id, label: c.name }))} />
         </Field>
         <Field label="Unit type"><Select value={f.unit} onChange={set('unit')} options={[{ value: 'pcs', label: 'Unit (pcs / packet)' }, { value: 'kg', label: 'Weight (kg)' }]} /></Field>
-        <Field label="MRP (₹)" required error={err('mrp')}><TextInput type="number" value={f.mrp} onChange={set('mrp')} placeholder="0" error={Boolean(err('mrp'))} /></Field>
-        <Field label="Selling price (₹)" required error={err('price')}><TextInput type="number" value={f.price} onChange={set('price')} placeholder="0" error={Boolean(err('price'))} /></Field>
-        <Field label="Cost price (₹)" optional><TextInput type="number" value={f.cost} onChange={set('cost')} placeholder="0" /></Field>
-        <Field label="GST rate"><Select value={f.tax} onChange={set('tax')} options={taxOptions} /></Field>
+        <Field label="MRP (QAR)" required error={err('mrp')}><TextInput type="number" value={f.mrp} onChange={set('mrp')} placeholder="0" error={Boolean(err('mrp'))} /></Field>
+        <Field label="Selling price (QAR)" required error={err('price')}><TextInput type="number" value={f.price} onChange={set('price')} placeholder="0" error={Boolean(err('price'))} /></Field>
+        <Field label="Cost price (QAR)" optional><TextInput type="number" value={f.cost} onChange={set('cost')} placeholder="0" /></Field>
+        <Field label="Tax rate"><Select value={f.tax} onChange={set('tax')} options={taxOptions} /></Field>
         <Field label="Reorder level"><TextInput type="number" value={f.reorder} onChange={set('reorder')} placeholder="0" /></Field>
         {!isEdit && <Field label="Initial stock"><TextInput type="number" value={f.stock} onChange={set('stock')} placeholder="0" /></Field>}
+        <div className="row gap8" style={{ gridColumn: '1 / -1', fontSize: 13, fontWeight: 600 }}><Checkbox checked={f.expiryTracked} onChange={checked => setF(s => ({ ...s, expiryTracked: checked }))} />Track batches and expiry dates for this item</div>
       </div>
     </Modal>
+  )
+}
+
+function StockAdjustmentWorkspace({
+  products, canEdit, mode, onAdjust, onHistory,
+}: {
+  products: Product[]; canEdit: boolean; mode: StockTransaction; onAdjust: (product: Product, mode: StockTransaction) => void; onHistory: (product: Product) => void
+}) {
+  const [productId, setProductId] = useState('')
+  const [moves, setMoves] = useState<StockMovement[]>([])
+  const [loadingMoves, setLoadingMoves] = useState(false)
+  const product = products.find(item => item.id === productId)
+  const config = TRANSACTION_COPY[mode]
+
+  useEffect(() => {
+    if (!productId && products[0]) setProductId(products[0].id)
+  }, [productId, products])
+
+  useEffect(() => {
+    if (!product) { setMoves([]); return }
+    setLoadingMoves(true)
+    fetchMovements(product.id).then(setMoves).catch(() => setMoves([])).finally(() => setLoadingMoves(false))
+  }, [product])
+
+  return (
+    <div className="content-pad page-shell compact">
+      <div className="page-header">
+        <div className="page-header-main">
+          <div className="section-title">{config.title}</div>
+          <div className="section-sub">{config.description}</div>
+        </div>
+      </div>
+      <Card title={config.action} sub="Select an item and record this transaction in the stock ledger.">
+        <div className="form-row">
+          <div className="form-field-product"><Field label="Item" required><Select value={productId} onChange={setProductId} icon="package" placeholder="Select an item" options={products.map(item => ({ value: item.id, label: item.name, sub: `${item.sku} · ${item.stock} ${item.unit} on hand` }))} /></Field></div>
+          {product && <>
+            <div className="form-field-narrow"><Field label="On hand"><div className="input filled"><span className="tnum">{product.stock} {product.unit}</span></div></Field></div>
+            <div className="form-field-narrow"><Field label="Reorder level"><div className="input filled"><span className="tnum">{product.reorder} {product.unit}</span></div></Field></div>
+            <div style={{ alignSelf: 'end', display: 'flex', gap: 8 }}>
+              <Button variant="outline" icon="history" onClick={() => onHistory(product)}>View history</Button>
+              {canEdit && <Button variant="primary" icon={config.icon} onClick={() => onAdjust(product, mode)}>{config.action}</Button>}
+            </div>
+          </>}
+        </div>
+      </Card>
+      {product && <Card title="Recent movements" sub={`${product.name} · ${product.sku}`} noBody>
+        {loadingMoves ? <ContentLoader /> : moves.length === 0 ? (
+          <div className="empty" style={{ minHeight: 180 }}><div className="ei"><Icon name="history" size={22} /></div><div style={{ fontWeight: 600, color: 'var(--fg)' }}>No movements yet</div><div>Stock changes for this item will appear here.</div></div>
+        ) : <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Transaction</th><th>Date & time</th><th>Notes</th><th className="num">Change</th></tr></thead><tbody>{moves.map(move => (
+          <tr key={move.id}>
+            <td><div className="row gap8"><Icon name={move.signedDelta > 0 ? 'arrow-down-to-line' : 'arrow-up-from-line'} size={16} style={{ color: move.signedDelta > 0 ? 'var(--success-fg)' : 'var(--danger-fg)' }} /><span className="td-strong">{movementLabel(move.movementType)}</span></div></td>
+            <td className="muted">{formatMoveDate(move.createdAt)}</td><td className="muted">{move.notes || '—'}</td>
+            <td className="num tnum" style={{ fontWeight: 700, color: move.signedDelta > 0 ? 'var(--success-fg)' : 'var(--danger-fg)' }}>{move.signedDelta > 0 ? '+' : ''}{move.signedDelta}</td>
+          </tr>
+        ))}</tbody></table></div>}
+      </Card>}
+    </div>
   )
 }
 
@@ -236,10 +329,12 @@ export function Inventory({
   prefillQuery,
   prefillKey,
   onPrefillConsumed,
+  section = 'items',
 }: {
   prefillQuery?: string
   prefillKey?: number
   onPrefillConsumed?: () => void
+  section?: InventorySectionId
 } = {}) {
   const toast = useToast()
   const { user } = useAuth()
@@ -262,7 +357,7 @@ export function Inventory({
   const [sort, setSort] = useState<{ key: keyof Product; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' })
   const [page, setPage] = useState(0)
   const [sel, setSel] = useState<Set<string>>(new Set())
-  const [adjust, setAdjust] = useState<Product | null>(null)
+  const [adjust, setAdjust] = useState<{ product: Product; mode: StockTransaction } | null>(null)
   const [history, setHistory] = useState<Product | null>(null)
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
@@ -325,11 +420,15 @@ export function Inventory({
     setSel(s => { const n = new Set(s); if (allOn) pageRows.forEach(p => n.delete(p.id)); else pageRows.forEach(p => n.add(p.id)); return n })
   }
 
-  async function doAdjust(delta: number, reason: string, notes: string) {
+  async function doAdjust(delta: number, reason: string, notes: string, batchNumber?: string, expiryDate?: string) {
     if (!adjust) return
-    const target = adjust
+    const target = adjust.product
     try {
-      await adjustStock(target.id, delta, reason, notes)
+      if (reason === 'receipt' && target.expiryTracked) {
+        await recordBatchReceipt(target.id, { quantity: delta, batchNumber: batchNumber?.trim() ?? '', expiryDate, notes })
+      } else {
+        await adjustStock(target.id, delta, reason, notes)
+      }
       await invalidateCatalog.products()
       setHistory(h => (h?.id === target.id ? { ...h, stock: Math.max(0, h.stock + delta) } : h))
       setAdjust(null)
@@ -394,20 +493,28 @@ export function Inventory({
     }
   }
 
+  if (section !== 'items') {
+    return <>
+      <StockAdjustmentWorkspace products={products} canEdit={canEdit} mode={section} onAdjust={(product, mode) => setAdjust({ product, mode })} onHistory={setHistory} />
+      {canEdit && adjust && <AdjustModal product={adjust.product} mode={adjust.mode} onClose={() => setAdjust(null)} onSave={doAdjust} />}
+      {history && <HistoryDrawer product={history} onClose={() => setHistory(null)} />}
+    </>
+  }
+
   return (
     <div className="content-pad page-shell compact">
       <div className="page-header">
         <div className="page-header-main">
-          <div className="section-title">Inventory</div>
+          <div className="section-title">Item master</div>
           <div className="section-sub">
-            {initialLoading ? 'Loading catalog…' : `${products.length} products · ${categories.length} categories`}
+            {initialLoading ? 'Loading item master…' : `${products.length} items · ${categories.length} categories`}
           </div>
         </div>
         {(canImport || canExport || canEdit) && (
         <div className="row gap8 page-header-actions" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {canImport && <Button size="sm" icon="upload" onClick={() => setImportOpen(true)}>Bulk import</Button>}
           {canExport && <Button size="sm" icon="download" disabled={exporting} onClick={() => void doExport(false)}>{exporting ? 'Exporting…' : 'Export'}</Button>}
-          {canEdit && <Button size="sm" variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add Product</Button>}
+          {canEdit && <Button size="sm" variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add item</Button>}
         </div>
         )}
       </div>
@@ -420,7 +527,7 @@ export function Inventory({
           ) : (
             <KpiCard label="Units on hand" value={summary.totalUnits.toLocaleString('en-IN')} icon="layers" tone="tile-info" />
           )}
-          <KpiCard label="Stock value (selling)" value={money(summary.sellingValue)} icon="indian-rupee" tone="tile-success" vs={`MRP ${money(summary.mrpValue)}`} />
+          <KpiCard label="Stock value (selling)" value={money(summary.sellingValue)} icon="wallet" tone="tile-success" vs={`MRP ${money(summary.mrpValue)}`} />
           <KpiCard
             label="Stock alerts"
             value={String(summary.lowStockCount + summary.outOfStockCount)}
@@ -527,7 +634,7 @@ export function Inventory({
                     <td>
                       <RowMenu
                         onHistory={() => setHistory(p)}
-                        onAdjust={canEdit ? () => setAdjust(p) : undefined}
+                        onAdjust={canEdit ? () => setAdjust({ product: p, mode: 'adjustment' }) : undefined}
                         onEdit={canEdit ? () => setEditProduct(p) : undefined}
                       />
                     </td>
@@ -552,7 +659,7 @@ export function Inventory({
         )}
       </Card>
 
-      {canEdit && adjust && <AdjustModal product={adjust} onClose={() => setAdjust(null)} onSave={doAdjust} />}
+      {canEdit && adjust && <AdjustModal product={adjust.product} mode={adjust.mode} onClose={() => setAdjust(null)} onSave={doAdjust} />}
       {history && <HistoryDrawer product={history} onClose={() => setHistory(null)} />}
       {canEdit && addOpen && <ProductModal categories={categories} onClose={() => setAddOpen(false)} onSave={doAddProduct} />}
       {canEdit && editProduct && <ProductModal categories={categories} initialProduct={editProduct} onClose={() => setEditProduct(null)} onSave={doUpdateProduct} />}

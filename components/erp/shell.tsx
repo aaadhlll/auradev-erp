@@ -4,27 +4,42 @@ import { useState, useRef } from 'react'
 import { Icon } from './ui'
 import { Avatar } from './ui'
 import { useAuth } from '@/lib/auth-context'
-import { canAccessView, formatRoleLabel } from '@/lib/rbac'
+import { canAccessView, canAccessSettingsSection, formatRoleLabel, type SettingsSectionId } from '@/lib/rbac'
 import { MercantileMark } from '@/components/brand/MercantileMark'
 import { useClickOutside } from './ui'
 import { useProductsQuery } from '@/lib/queries/use-catalog'
 import { usePurchaseKpisQuery } from '@/lib/queries/use-purchases'
 import { stockStatus } from '@/lib/erp-data'
+import { moduleForView, type ViewId } from '@/lib/modules'
+import type { InventorySectionId } from './inventory'
 
-export type ViewId = 'dashboard' | 'pos' | 'bills' | 'inventory' | 'purchases' | 'settings'
+export type { ViewId } from '@/lib/modules'
 
 const NAV = [
   {
-    label: 'Operations', items: [
+    module: 'overview', label: 'Overview', items: [
       { id: 'dashboard' as ViewId, label: 'Dashboard', icon: 'layout-dashboard' },
+    ],
+  },
+  {
+    module: 'pos', label: 'Point of Sale', items: [
       { id: 'pos' as ViewId, label: 'Billing / POS', icon: 'scan-line' },
       { id: 'bills' as ViewId, label: 'Sales bills', icon: 'receipt' },
+    ],
+  },
+  {
+    module: 'inventory', label: 'Inventory', items: [
       { id: 'inventory' as ViewId, label: 'Inventory', icon: 'boxes' },
     ],
   },
   {
-    label: 'Procurement', items: [
+    module: 'procurement', label: 'Procurement', items: [
       { id: 'purchases' as ViewId, label: 'Purchases', icon: 'truck' },
+    ],
+  },
+  {
+    module: 'administration', label: 'Administration', items: [
+      { id: 'settings' as ViewId, label: 'Settings', icon: 'settings' },
     ],
   },
 ]
@@ -35,24 +50,51 @@ const VIEW_META: Record<ViewId, { title: string; crumb: string }> = {
   bills: { title: 'Sales bills', crumb: 'Operations · Bill history' },
   inventory: { title: 'Inventory', crumb: 'Operations · Stock' },
   purchases: { title: 'Purchases', crumb: 'Procurement · Supplier Bills' },
-  settings: { title: 'Settings', crumb: 'Administration' },
+  settings: { title: 'Administration', crumb: 'Workspace controls' },
 }
 
+const ADMINISTRATION_NAV: { id: SettingsSectionId; label: string; icon: string }[] = [
+  { id: 'store', label: 'Store profile', icon: 'store' },
+  { id: 'billing', label: 'Billing & POS', icon: 'scan-line' },
+  { id: 'printer', label: 'Receipt output', icon: 'printer' },
+  { id: 'users', label: 'Team access', icon: 'users' },
+  { id: 'modules', label: 'Module access', icon: 'layout-grid' },
+  { id: 'audit', label: 'Activity log', icon: 'scroll-text' },
+]
+
+const INVENTORY_NAV: { id: 'master' | 'transactions'; label: string; icon: string; items: { id: InventorySectionId; label: string; icon: string }[] }[] = [
+  { id: 'master', label: 'Master', icon: 'database', items: [{ id: 'items', label: 'Item master', icon: 'package' }] },
+  { id: 'transactions', label: 'Transactions', icon: 'arrow-left-right', items: [
+    { id: 'opening', label: 'Opening stock', icon: 'package-open' },
+    { id: 'receipt', label: 'Stock receipt', icon: 'package-check' },
+    { id: 'adjustment', label: 'Stock adjustment', icon: 'package-plus' },
+    { id: 'count', label: 'Physical count', icon: 'clipboard-check' },
+    { id: 'wastage', label: 'Damage & wastage', icon: 'trash-2' },
+  ] },
+]
+
 export function Sidebar({
-  view, setView, collapsed, mobileOpen, onNavigate,
+  view, setView, collapsed, mobileOpen, onNavigate, onOpenModules, settingsSection, onSettingsSectionChange, inventorySection, onInventorySectionChange,
 }: {
   view: ViewId
   setView: (v: ViewId) => void
   collapsed: boolean
   mobileOpen?: boolean
   onNavigate?: () => void
+  onOpenModules: () => void
+  settingsSection?: SettingsSectionId
+  onSettingsSectionChange?: (section: SettingsSectionId) => void
+  inventorySection?: InventorySectionId
+  onInventorySectionChange?: (section: InventorySectionId) => void
 }) {
   const { user, logout } = useAuth()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [inventoryGroups, setInventoryGroups] = useState<Record<'master' | 'transactions', boolean>>({ master: true, transactions: true })
   const menuRef = useRef<HTMLDivElement>(null)
   useClickOutside(menuRef, () => setMenuOpen(false), menuOpen)
 
   const canSettings = canAccessView(user, 'settings')
+  const activeModule = moduleForView(view)
 
   const productsQuery = useProductsQuery()
   const lowStockCount = (productsQuery.data ?? []).filter(p => stockStatus(p) !== 'in').length
@@ -70,17 +112,56 @@ export function Sidebar({
 
   return (
     <aside className={'sidebar' + (collapsed ? ' collapsed' : '') + (mobileOpen ? ' mobile-open' : '')}>
-      <div className="sb-brand">
+      <button type="button" className="sb-brand" onClick={onOpenModules} aria-label="Open Mercantile modules">
         <div className="sb-logo">
           <MercantileMark height={16} />
         </div>
         <div className="sb-brand-text">
           <span className="nm font-brand">Mercantile</span>
+          <span className="sub">{activeModule.label}</span>
         </div>
-      </div>
+        <Icon name="grip" size={15} className="sb-module-trigger" />
+      </button>
 
       <div className="sb-scroll">
-        {NAV.map(sec => {
+        {activeModule.id === 'inventory' ? (
+          <div className="sb-section">
+            <div className="sb-label">Inventory</div>
+            {INVENTORY_NAV.map(group => (
+              <div className="sb-nav-group" key={group.id}>
+                <button type="button" className="sb-nav sb-nav-parent" data-tip={group.label} onClick={() => setInventoryGroups(groups => ({ ...groups, [group.id]: !groups[group.id] }))} aria-expanded={inventoryGroups[group.id]}>
+                  <Icon name={group.icon} size={16} className="ic" />
+                  <span className="sb-txt">{group.label}</span>
+                  <Icon name={inventoryGroups[group.id] ? 'chevron-up' : 'chevron-down'} size={14} className="chev" />
+                </button>
+                {inventoryGroups[group.id] && <div className="sb-subnav">
+                  {group.items.map(item => (
+                    <button key={item.id} className={'sb-nav' + (inventorySection === item.id ? ' active' : '')} data-tip={item.label}
+                      onClick={() => { onInventorySectionChange?.(item.id); onNavigate?.() }}>
+                      <Icon name={item.icon} size={17} className="ic" />
+                      <span className="sb-txt">{item.label}</span>
+                    </button>
+                  ))}
+                </div>}
+              </div>
+            ))}
+          </div>
+        ) : activeModule.id === 'administration' ? (
+          <div className="sb-section sb-administration-section">
+            <div className="sb-label">Administration</div>
+            {ADMINISTRATION_NAV.filter(item => canAccessSettingsSection(user, item.id)).map(item => (
+              <button
+                key={item.id}
+                className={'sb-nav' + (settingsSection === item.id ? ' active' : '')}
+                data-tip={item.label}
+                onClick={() => { onSettingsSectionChange?.(item.id); onNavigate?.() }}
+              >
+                <Icon name={item.icon} size={18} className="ic" />
+                <span className="sb-txt">{item.label}</span>
+              </button>
+            ))}
+          </div>
+        ) : NAV.filter(sec => sec.module === activeModule.id).map(sec => {
           const items = sec.items.filter(it => canAccessView(user, it.id))
           if (!items.length) return null
           return (
@@ -158,7 +239,7 @@ export function Sidebar({
   )
 }
 
-function NotificationBell() {
+export function NotificationBell() {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   useClickOutside(ref, () => setOpen(false), open)

@@ -14,6 +14,7 @@ export interface Product {
   tax: number
   stock: number
   reorder: number
+  expiryTracked?: boolean
 }
 
 export interface Customer {
@@ -250,5 +251,28 @@ export const AUDIT: AuditEntry[] = [
   { act: 'Printer settings updated', user: 'Anitha Reddy', ts: '28 May 5:44 PM', ip: '10.0.4.2' },
 ]
 
-export const money = (n: number): string => '₹' + Math.round(n).toLocaleString('en-IN')
-export const money2 = (n: number): string => '₹' + n.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+export type CurrencyCode = 'QAR' | 'INR'
+
+const CURRENCY_STORAGE_KEY = 'auradev.currency'
+const CURRENCY_LOCALES: Record<CurrencyCode, string> = { QAR: 'en-QA', INR: 'en-IN' }
+
+export function getCurrency(): CurrencyCode {
+  if (typeof window === 'undefined') return 'QAR'
+  return window.localStorage.getItem(CURRENCY_STORAGE_KEY) === 'INR' ? 'INR' : 'QAR'
+}
+
+export function setCurrency(currency: CurrencyCode) {
+  if (typeof window === 'undefined') return
+  window.localStorage.setItem(CURRENCY_STORAGE_KEY, currency)
+}
+
+function formatMoney(n: number, fractionDigits: number): string {
+  const currency = getCurrency()
+  return `${currency} ${n.toLocaleString(CURRENCY_LOCALES[currency], {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  })}`
+}
+
+export const money = (n: number): string => formatMoney(Math.round(n), 0)
+export const money2 = (n: number): string => formatMoney(n, 2)

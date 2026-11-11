@@ -39,10 +39,14 @@ export function pushPosRecent(product: Product) {
 export function mergeQuickPicks(recents: Product[], api: Product[], limit = 12): Product[] {
   const seen = new Set<string>()
   const out: Product[] = []
+  // Recent products decide the order, but the API is the source of truth for
+  // mutable values such as stock. A sessionStorage entry can be older than a
+  // stock receipt, adjustment, or another POS sale.
+  const latestById = new Map(api.map(product => [product.id, product]))
   for (const p of [...recents, ...api]) {
     if (seen.has(p.id)) continue
     seen.add(p.id)
-    out.push(p)
+    out.push(latestById.get(p.id) ?? p)
     if (out.length >= limit) break
   }
   return out

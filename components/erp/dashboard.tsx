@@ -18,7 +18,7 @@ import { useDebouncedValue } from '@/lib/queries/use-debounced-value'
 import { useCustomersQuery } from '@/lib/queries/use-customers'
 import { usePosSearchQuery } from '@/lib/queries/use-pos-search'
 import { useAuth } from '@/lib/auth-context'
-import { canCreateBill, canEditInventory, canAccessView, canManagePurchases } from '@/lib/rbac'
+import { canCreateBill, canAccessView, canManagePurchases } from '@/lib/rbac'
 
 function localIsoDate(d: Date): string {
   const y = d.getFullYear()
@@ -658,7 +658,6 @@ export function Dashboard({
 }) {
   const { user } = useAuth()
   const canBill = canCreateBill(user)
-  const canStock = canEditInventory(user)
   const canBills = canAccessView(user, 'bills')
   const canPurchases = canManagePurchases(user)
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_DASHBOARD_FILTERS)
@@ -760,8 +759,6 @@ export function Dashboard({
           <Button size="sm" icon="refresh-cw" onClick={() => void refetch()} disabled={loading || !customRangeReady}>
             {loading ? 'Updating…' : 'Refresh'}
           </Button>
-          {canStock && <Button size="sm" icon="package-plus" onClick={() => setView('inventory')}>Stock Adjustment</Button>}
-          {canStock && <Button size="sm" icon="plus" onClick={() => setView('inventory')}>Add Product</Button>}
           {canBill && <Button size="sm" variant="primary" icon="scan-line" onClick={() => setView('pos')}>New Bill</Button>}
         </div>
       </div>

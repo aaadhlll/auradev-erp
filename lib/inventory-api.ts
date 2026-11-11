@@ -19,6 +19,7 @@ interface ApiProduct {
   quantityOnHand: number
   lowStockThreshold: number | null
   reorderQuantity: number | null
+  expiryTracked: boolean
 }
 
 export interface ApiCategory {
@@ -67,14 +68,15 @@ function mapProduct(p: ApiProduct): Product {
     tax: Number(p.taxRatePct),
     stock: Number(p.quantityOnHand),
     reorder: Number(p.reorderQuantity ?? p.lowStockThreshold ?? 0),
+    expiryTracked: Boolean(p.expiryTracked),
   }
 }
 
 const REASON_TO_MOVEMENT: Record<string, string> = {
-  grn: 'purchase',
-  damage: 'waste',
-  return: 'return',
-  count: 'adjustment_in',
+  opening: 'opening_stock',
+  receipt: 'stock_receipt',
+  wastage: 'waste',
+  count: 'count_in',
 }
 
 const MOVEMENT_LABEL: Record<string, string> = {
@@ -85,6 +87,10 @@ const MOVEMENT_LABEL: Record<string, string> = {
   waste: 'Damage',
   adjustment_in: 'Stock count (add)',
   adjustment_out: 'Stock count (remove)',
+  opening_stock: 'Opening stock',
+  stock_receipt: 'Stock receipt',
+  count_in: 'Physical count (add)',
+  count_out: 'Physical count (remove)',
 }
 
 export function movementLabel(type: string): string {
@@ -105,6 +111,7 @@ export interface ProductFormData {
   tax: string
   reorder: string
   stock: string
+  expiryTracked: boolean
 }
 
 function unitTypeForForm(unit: string): string {
@@ -130,6 +137,7 @@ function toCreateBody(f: ProductFormData) {
     initialStock: +f.stock || 0,
     lowStockThreshold: +f.reorder || 0,
     reorderQuantity: +f.reorder || 0,
+    expiryTracked: f.expiryTracked,
   }
 }
 
@@ -147,6 +155,7 @@ function toUpdateBody(f: ProductFormData) {
     taxRatePct: +f.tax,
     lowStockThreshold: +f.reorder || 0,
     reorderQuantity: +f.reorder || 0,
+    expiryTracked: f.expiryTracked,
   }
 }
 
@@ -222,7 +231,8 @@ function resolveMovementType(delta: number, reason: string): string {
   if (delta > 0) {
     return REASON_TO_MOVEMENT[reason] ?? 'adjustment_in'
   }
-  if (reason === 'damage') return 'waste'
+  if (reason === 'wastage') return 'waste'
+  if (reason === 'count') return 'count_out'
   return 'adjustment_out'
 }
 
@@ -241,6 +251,27 @@ export async function adjustStock(
     }),
   })
   return fetchProduct(id)
+}
+
+export interface InventoryBatch {
+  id: string
+  batchNumber: string
+  expiryDate: string | null
+  receivedDate: string
+  quantityReceived: number
+  quantityOnHand: number
+  notes: string | null
+}
+
+export async function recordBatchReceipt(productId: string, input: { quantity: number; batchNumber: string; expiryDate?: string; notes?: string }): Promise<InventoryBatch> {
+  return apiFetch<InventoryBatch>(`/api/v1/products/${productId}/batches/receipt`, {
+    method: 'POST',
+    body: JSON.stringify({ quantity: input.quantity, batchNumber: input.batchNumber, expiryDate: input.expiryDate || null, notes: input.notes || null }),
+  })
+}
+
+export async function fetchProductBatches(productId: string): Promise<InventoryBatch[]> {
+  return apiFetch<InventoryBatch[]>(`/api/v1/products/${productId}/batches`)
 }
 
 // ── Movements ─────────────────────────────────────────────────────────────────

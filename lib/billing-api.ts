@@ -9,7 +9,38 @@ export interface ApiCustomer {
   creditBalance: number
 }
 
+export interface CustomerCreditPayment {
+  id: string
+  paymentNo: string
+  amount: number
+  paymentMethod: 'CASH' | 'UPI' | 'CARD'
+  notes: string | null
+  receivedBy: string
+  createdAt: string
+  balanceAfter: number
+}
+
+export interface CustomerCreditLedgerEntry {
+  id: string
+  type: 'CREDIT_SALE' | 'SETTLEMENT'
+  reference: string
+  description: string
+  debit: number
+  credit: number
+  balanceAfter: number
+  paymentMethod: string
+  notes: string | null
+  processedBy: string
+  createdAt: string
+}
+
+export interface CustomerCreditLedger {
+  currentBalance: number
+  entries: CustomerCreditLedgerEntry[]
+}
+
 export interface BillLine {
+  billItemId: string
   productId: string
   name: string
   sku: string
@@ -19,6 +50,7 @@ export interface BillLine {
   lineDiscount: number
   gstRate: number
   lineTotal: number
+  returnedQuantity: number
 }
 
 export interface BillSummary {
@@ -93,6 +125,7 @@ export interface CreateBillPayload extends BillCartPayload {
 
 function mapBill(b: Record<string, unknown>): SavedBill {
   const lines = (b.lines as Record<string, unknown>[]).map(l => ({
+    billItemId: String(l.billItemId),
     productId: String(l.productId),
     name: String(l.name),
     sku: String(l.sku),
@@ -102,6 +135,7 @@ function mapBill(b: Record<string, unknown>): SavedBill {
     lineDiscount: Number(l.lineDiscount ?? 0),
     gstRate: Number(l.gstRate),
     lineTotal: Number(l.lineTotal),
+    returnedQuantity: Number(l.returnedQuantity ?? 0),
   }))
   const gstSlabs = ((b.gstSlabs as Record<string, unknown>[]) ?? []).map(s => ({
     ratePct: Number(s.ratePct),
@@ -131,6 +165,85 @@ function mapBill(b: Record<string, unknown>): SavedBill {
     gstSlabs,
     lines,
   }
+}
+
+export interface SalesReturnLine {
+  billItemId: string
+  productId: string
+  name: string
+  quantity: number
+  refundAmount: number
+}
+
+export interface SalesReturn {
+  id: string
+  returnNo: string
+  billId: string
+  reason: string
+  refundMethod: 'CASH' | 'UPI' | 'CARD' | 'CREDIT'
+  refundTotal: number
+  createdAt: string
+  items: SalesReturnLine[]
+}
+
+export interface SalesReturnReportRow {
+  id: string
+  returnNo: string
+  billId: string
+  billNo: string
+  customerName: string
+  productName: string
+  sku: string
+  quantity: number
+  refundAmount: number
+  refundMethod: SalesReturn['refundMethod']
+  reason: string
+  processedBy: string
+  createdAt: string
+}
+
+export interface PagedSalesReturns {
+  items: SalesReturnReportRow[]
+  page: number
+  size: number
+  totalElements: number
+  totalPages: number
+}
+
+export async function fetchSalesReturns(billId: string): Promise<SalesReturn[]> {
+  return apiFetch<SalesReturn[]>(`/api/v1/bills/${billId}/returns`)
+}
+
+export async function createSalesReturn(billId: string, payload: {
+  reason: string
+  refundMethod: SalesReturn['refundMethod']
+  items: { billItemId: string; quantity: number }[]
+}): Promise<SalesReturn> {
+  return apiFetch<SalesReturn>(`/api/v1/bills/${billId}/returns`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function fetchSalesReturnsReport(q = '', page = 0, size = 25): Promise<PagedSalesReturns> {
+  const params = new URLSearchParams({ page: String(page), size: String(size) })
+  if (q.trim()) params.set('q', q.trim())
+  const raw = await apiFetch<Record<string, unknown>>(`/api/v1/bills/returns/report?${params}`)
+  const items = ((raw.content as Record<string, unknown>[]) ?? []).map(row => ({
+    id: String(row.id), returnNo: String(row.returnNo), billId: String(row.billId), billNo: String(row.billNo),
+    customerName: String(row.customerName ?? 'Walk-in'), productName: String(row.productName), sku: String(row.sku),
+    quantity: Number(row.quantity), refundAmount: Number(row.refundAmount),
+    refundMethod: String(row.refundMethod) as SalesReturn['refundMethod'], reason: String(row.reason),
+    processedBy: String(row.processedBy ?? '—'), createdAt: String(row.createdAt),
+  }))
+  return { items, page: Number(raw.page ?? 0), size: Number(raw.size ?? size), totalElements: Number(raw.totalElements ?? items.length), totalPages: Number(raw.totalPages ?? 1) }
+}
+
+export async function downloadSalesReturnsReport(q = ''): Promise<void> {
+  const { downloadAuthenticatedFile } = await import('./file-download')
+  const params = new URLSearchParams()
+  if (q.trim()) params.set('q', q.trim())
+  await downloadAuthenticatedFile(`/api/v1/bills/returns/export/csv?${params}`, 'sales-returns.csv')
 }
 
 function mapHeldSummary(b: Record<string, unknown>): HeldBillSummary {
@@ -179,6 +292,25 @@ export interface CreateCustomerPayload {
 
 export async function createCustomer(payload: CreateCustomerPayload): Promise<ApiCustomer> {
   return apiFetch<ApiCustomer>('/api/v1/customers', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function fetchCustomerCreditPayments(customerId: string): Promise<CustomerCreditPayment[]> {
+  return apiFetch<CustomerCreditPayment[]>(`/api/v1/customers/${customerId}/credit-payments`)
+}
+
+export async function fetchCustomerCreditLedger(customerId: string): Promise<CustomerCreditLedger> {
+  return apiFetch<CustomerCreditLedger>(`/api/v1/customers/${customerId}/credit-ledger`)
+}
+
+export async function settleCustomerCredit(customerId: string, payload: {
+  amount: number
+  paymentMethod: CustomerCreditPayment['paymentMethod']
+  notes?: string
+}): Promise<CustomerCreditPayment> {
+  return apiFetch<CustomerCreditPayment>(`/api/v1/customers/${customerId}/credit-payments`, {
     method: 'POST',
     body: JSON.stringify(payload),
   })

@@ -11,9 +11,11 @@ import {
   type LoginResponse,
 } from './api'
 import { queryClient } from './query-client'
+import { fetchMyModules } from './module-access-api'
 
-function normalizeUser(user: AuthUser): AuthUser {
-  return { ...user, permissions: user.permissions ?? [] }
+async function hydrateUser(user: AuthUser): Promise<AuthUser> {
+  const modules = await fetchMyModules().catch(() => undefined)
+  return { ...user, permissions: user.permissions ?? [], modules: modules ?? user.modules }
 }
 
 interface AuthState {
@@ -36,7 +38,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return
     }
     getMe()
-      .then(u => setUser(normalizeUser(u)))
+      .then(hydrateUser)
+      .then(setUser)
       .catch(() => {
         clearTokens()
         setUser(null)
@@ -46,8 +49,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(async (email: string, password: string) => {
     const data = await apiLogin(email, password)
-    setUser(normalizeUser(data.user))
-    return data
+    const hydrated = await hydrateUser(data.user)
+    setUser(hydrated)
+    return { ...data, user: hydrated }
   }, [])
 
   const logout = useCallback(async () => {

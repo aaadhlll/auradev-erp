@@ -1,12 +1,13 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
-import { ToastProvider, useToast } from './ui'
+import { useState, useEffect } from 'react'
+import { usePathname, useRouter } from 'next/navigation'
+import { ToastProvider } from './ui'
 import { Sidebar, Topbar, type ViewId } from './shell'
 import { GlobalSearch, type GlobalSearchSelect } from './global-search'
 import { Dashboard } from './dashboard'
 import { POS } from './pos'
-import { Inventory } from './inventory'
+import { Inventory, type InventorySectionId } from './inventory'
 import { Purchases } from './purchases'
 import { Bills } from './bills'
 import { Settings } from './settings'
@@ -15,19 +16,32 @@ import { BrandedLoader } from './branded-loader'
 import { useAuth } from '@/lib/auth-context'
 import { canAccessView, firstAccessibleView } from '@/lib/rbac'
 import { useTheme } from '@/lib/theme'
-
-const SPLASH_MS = 2500
+import { ModuleHub } from './module-hub'
+import { ModuleLayout } from './module-layout'
+import { moduleForRoute, moduleForView } from '@/lib/modules'
+import type { SettingsSectionId } from '@/lib/rbac'
 
 function AppInner() {
-  const toast = useToast()
+  const pathname = usePathname()
+  const router = useRouter()
   const { user } = useAuth()
   const { theme, toggleTheme } = useTheme()
-  const [view, setView] = useState<ViewId>('dashboard')
+  const [view, setView] = useState<ViewId>(() => moduleForRoute(pathname)?.defaultView ?? 'dashboard')
   const [collapsed, setCollapsed] = useState(false)
   const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [searchOpen, setSearchOpen] = useState(false)
   const [prefill, setPrefill] = useState<{ view: ViewId; q: string; key: number } | null>(null)
   const [openBillId, setOpenBillId] = useState<string | null>(null)
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('store')
+  const [inventorySection, setInventorySection] = useState<InventorySectionId>('items')
+
+  useEffect(() => {
+    const routeModule = moduleForRoute(pathname)
+    if (!routeModule || !user) return
+    if (canAccessView(user, routeModule.defaultView)) return
+    const fallback = firstAccessibleView(user)
+    router.replace(moduleForView(fallback).route)
+  }, [pathname, router, user])
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -70,7 +84,8 @@ function AppInner() {
   }, [user, view])
 
   function handleSearchSelect(sel: GlobalSearchSelect) {
-    setView(sel.view)
+    if (sel.view === 'inventory') setInventorySection('items')
+    navigateToView(sel.view)
     if (sel.billId) {
       setOpenBillId(sel.billId)
       return
@@ -78,11 +93,21 @@ function AppInner() {
     if (sel.query) setPrefill({ view: sel.view, q: sel.query, key: Date.now() })
   }
 
+  function navigateToView(next: ViewId) {
+    if (next === 'inventory') setInventorySection('items')
+    setView(next)
+    const nextModule = moduleForView(next)
+    const routeModule = moduleForRoute(pathname)
+    if (routeModule?.id !== nextModule.id) router.push(nextModule.route)
+  }
+
+  if (pathname === '/home') return <ModuleHub />
+
   const isPOS = view === 'pos'
 
   return (
-    <div className="app">
-      {mobileNavOpen && (
+    <ModuleLayout
+      backdrop={mobileNavOpen && (
         <button
           type="button"
           className="sidebar-backdrop"
@@ -90,15 +115,19 @@ function AppInner() {
           onClick={() => setMobileNavOpen(false)}
         />
       )}
-      <Sidebar
+      sidebar={<Sidebar
         view={view}
-        setView={setView}
+        setView={navigateToView}
         collapsed={collapsed}
         mobileOpen={mobileNavOpen}
         onNavigate={() => setMobileNavOpen(false)}
-      />
-      <div className="main">
-        <Topbar
+        onOpenModules={() => router.push('/home')}
+        settingsSection={settingsSection}
+        onSettingsSectionChange={setSettingsSection}
+        inventorySection={inventorySection}
+        onInventorySectionChange={setInventorySection}
+      />}
+      topbar={<Topbar
           view={view}
           theme={theme}
           onToggleTheme={toggleTheme}
@@ -106,7 +135,8 @@ function AppInner() {
           setCollapsed={setCollapsed}
           onMobileNav={() => setMobileNavOpen(o => !o)}
           onCmd={() => setSearchOpen(true)}
-        />
+        />}
+    >
         <GlobalSearch
           open={searchOpen}
           onClose={() => setSearchOpen(false)}
@@ -115,8 +145,8 @@ function AppInner() {
         <div className={'content' + (isPOS ? ' pos-mode' : '')}>
           <div className="dashboard-mount" style={{ display: view === 'dashboard' ? 'block' : 'none' }}>
             <Dashboard
-              setView={(v) => setView(v as ViewId)}
-              onOpenBill={(id) => { setOpenBillId(id); setView('bills') }}
+              setView={(v) => navigateToView(v as ViewId)}
+              onOpenBill={(id) => { setOpenBillId(id); navigateToView('bills') }}
               active={view === 'dashboard'}
             />
           </div>
@@ -134,6 +164,7 @@ function AppInner() {
               prefillQuery={prefill?.view === 'inventory' ? prefill.q : undefined}
               prefillKey={prefill?.view === 'inventory' ? prefill.key : undefined}
               onPrefillConsumed={() => setPrefill(null)}
+              section={inventorySection}
             />
           )}
           {view === 'purchases' && (
@@ -143,7 +174,7 @@ function AppInner() {
               onPrefillConsumed={() => setPrefill(null)}
             />
           )}
-          {view === 'settings'  && <Settings />}
+          {view === 'settings'  && <Settings section={settingsSection} onSectionChange={setSettingsSection} />}
           <div
             className="pos-mount"
             style={{ display: isPOS ? 'flex' : 'none' }}
@@ -156,46 +187,16 @@ function AppInner() {
             />
           </div>
         </div>
-      </div>
-    </div>
+    </ModuleLayout>
   )
 }
 
 export function ERPApp() {
   const { user, isLoading } = useAuth()
+  const pathname = usePathname()
   useTheme()
-  const [splash, setSplash] = useState(true)
-  const splashAt = useRef(Date.now())
-  const wasLoggedOut = useRef(false)
 
-  useEffect(() => {
-    if (isLoading) {
-      setSplash(true)
-      splashAt.current = Date.now()
-      return
-    }
-
-    if (!user) {
-      wasLoggedOut.current = true
-      setSplash(false)
-      return
-    }
-
-    if (wasLoggedOut.current) {
-      wasLoggedOut.current = false
-      splashAt.current = Date.now()
-      setSplash(true)
-      const t = setTimeout(() => setSplash(false), SPLASH_MS)
-      return () => clearTimeout(t)
-    }
-
-    const remaining = Math.max(0, SPLASH_MS - (Date.now() - splashAt.current))
-    setSplash(true)
-    const t = setTimeout(() => setSplash(false), remaining)
-    return () => clearTimeout(t)
-  }, [isLoading, user])
-
-  if (isLoading || (user && splash)) {
+  if (isLoading) {
     return <BrandedLoader />
   }
 
@@ -203,7 +204,7 @@ export function ERPApp() {
 
   return (
     <ToastProvider>
-      <AppInner />
+      <AppInner key={pathname} />
     </ToastProvider>
   )
 }
