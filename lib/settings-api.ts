@@ -114,6 +114,8 @@ export interface BillingSettings {
   showGstBreakupOnReceipt: boolean
   showCustomerOnReceipt: boolean
   roundTotalToRupee: boolean
+  markOverdueShiftsAtClose: boolean
+  shiftClosingTime: string
 }
 
 export async function fetchBillingSettings(): Promise<BillingSettings> {
@@ -160,8 +162,26 @@ export async function updateTaxSettings(payload: Omit<Partial<TaxSettings>, 'cat
 export interface PrinterSettings {
   widthMm: number
   autoPrint: boolean
+  autoDownloadReceipt: boolean
   copies: number
   showLogo: boolean
+  showStorePhone: boolean
+  showStoreAddress: boolean
+  showStoreTin: boolean
+  showBillDate: boolean
+  showCustomer: boolean
+  showCashier: boolean
+  showPayment: boolean
+  showTendered: boolean
+  showChange: boolean
+  showTaxBreakup: boolean
+  receiptTitle: string
+  cashDrawerEnabled: boolean
+  cashDrawerConnection: 'RECEIPT_PRINTER' | 'USB' | 'NETWORK'
+  cashDrawerName: string
+  cashDrawerPort: 'DRAWER_1' | 'DRAWER_2'
+  openDrawerOnCashPayment: boolean
+  allowManualDrawerOpen: boolean
 }
 
 export async function fetchPrinterSettings(): Promise<PrinterSettings> {
@@ -173,4 +193,34 @@ export async function updatePrinterSettings(payload: Partial<PrinterSettings>): 
     method: 'PUT',
     body: JSON.stringify(payload),
   })
+}
+
+export type DatabaseBackupState = 'QUEUED' | 'RUNNING' | 'COMPLETED' | 'FAILED'
+
+export interface DatabaseBackup {
+  id: string
+  fileName: string
+  status: DatabaseBackupState
+  triggerType: 'MANUAL' | 'SCHEDULED'
+  startedAt: string
+  completedAt: string | null
+  sizeBytes: number | null
+  errorMessage: string | null
+}
+
+export interface DatabaseBackupStatus {
+  enabled: boolean
+  storageConfigured: boolean
+  backupMode: 'PG_DUMP' | 'DOCKER'
+  scheduleDescription: string
+  retentionDays: number
+  history: DatabaseBackup[]
+}
+
+export async function fetchDatabaseBackupStatus(): Promise<DatabaseBackupStatus> {
+  return apiFetch<DatabaseBackupStatus>('/api/v1/settings/backups')
+}
+
+export async function runDatabaseBackup(): Promise<DatabaseBackup> {
+  return apiFetch<DatabaseBackup>('/api/v1/settings/backups/run', { method: 'POST' })
 }

@@ -11,8 +11,17 @@ function useSameOriginProxy(): boolean {
   return process.env.VERCEL === '1' || Boolean(process.env.NEXT_PUBLIC_APP_URL)
 }
 
+function desktopApiBaseUrl(): string | null {
+  if (typeof window === 'undefined') return null
+  const desktop = (window as Window & { mercantileDesktop?: { apiBaseUrl?: string | null } }).mercantileDesktop
+  return desktop?.apiBaseUrl?.replace(/\/$/, '') ?? null
+}
+
 /** API origin — same-origin proxy in production; direct to :8080 in local dev. */
 export function getApiBaseUrl(): string {
+  const desktopUrl = desktopApiBaseUrl()
+  if (desktopUrl) return desktopUrl
+
   if (useSameOriginProxy()) {
     if (typeof window !== 'undefined') {
       return window.location.origin

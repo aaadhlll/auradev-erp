@@ -12,9 +12,17 @@
 
 # testing
 /coverage
+/test-results
+/playwright-report
+/release
+/desktop/runtime/*.jar
+/desktop/runtime/jre
+/desktop-build*.log
+/electron-package*.log
 
 # next.js
 /.next/
+/.next-verify/
 /out/
 
 # production

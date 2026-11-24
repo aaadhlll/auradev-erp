@@ -1,4 +1,4 @@
-export type ViewId = 'dashboard' | 'pos' | 'bills' | 'inventory' | 'purchases' | 'settings'
+export type ViewId = 'dashboard' | 'pos' | 'bills' | 'inventory' | 'purchases' | 'suppliers' | 'settings'
 
 export type ModuleId = 'overview' | 'pos' | 'inventory' | 'procurement' | 'administration'
 
@@ -50,7 +50,7 @@ export const MERCANTILE_MODULES: MercantileModule[] = [
     description: 'Control suppliers, purchases and receiving',
     icon: 'truck',
     defaultView: 'purchases',
-    views: ['purchases'],
+    views: ['purchases', 'suppliers'],
     tone: 'violet',
     route: '/procurement/dashboard',
   },

@@ -35,14 +35,15 @@ test.describe('Authentication', () => {
     await page.getByPlaceholder('you@store.in').fill(EMAIL)
     await page.getByPlaceholder('Enter your password').fill(PASSWORD)
     await page.getByRole('button', { name: /sign in/i }).click()
-    // .sb-logo is the pine brand box — only visible after splash clears
-    await expect(page.locator('.sb-logo')).toBeVisible({ timeout: 10000 })
+    await expect(page.getByRole('heading', { name: 'Hey there,' })).toBeVisible({ timeout: 10000 })
   })
 
   test('logs out and returns to login screen', async ({ page }) => {
     await page.getByPlaceholder('you@store.in').fill(EMAIL)
     await page.getByPlaceholder('Enter your password').fill(PASSWORD)
     await page.getByRole('button', { name: /sign in/i }).click()
+    await expect(page.getByRole('heading', { name: 'Hey there,' })).toBeVisible({ timeout: 10000 })
+    await page.getByRole('button', { name: /overview/i }).click()
     await expect(page.locator('.sb-logo')).toBeVisible({ timeout: 10000 })
 
     await page.locator('.sb-user').click()

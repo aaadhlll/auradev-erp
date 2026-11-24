@@ -18,6 +18,7 @@ export function canAccessView(user: AuthUser | null | undefined, view: ViewId): 
     case 'inventory':
       return hasPermission(user, 'INVENTORY_VIEW')
     case 'purchases':
+    case 'suppliers':
       return hasPermission(user, 'PURCHASE_VIEW')
     case 'settings':
       return hasAnyPermission(
@@ -91,7 +92,7 @@ export function formatRoleLabel(role: string): string {
     .replace(/\b\w/g, c => c.toUpperCase())
 }
 
-export type SettingsSectionId = 'store' | 'billing' | 'users' | 'modules' | 'tax' | 'payments' | 'printer' | 'audit'
+export type SettingsSectionId = 'store' | 'billing' | 'users' | 'modules' | 'tax' | 'payments' | 'printer' | 'backups' | 'audit' | 'shifts'
 
 export function canAccessSettingsSection(user: AuthUser | null | undefined, section: SettingsSectionId): boolean {
   if (!user) return false
@@ -102,10 +103,13 @@ export function canAccessSettingsSection(user: AuthUser | null | undefined, sect
       return hasAnyPermission(user, 'SETTINGS_BILLING_VIEW', 'SETTINGS_BILLING_EDIT')
     case 'printer':
       return hasAnyPermission(user, 'SETTINGS_PRINTER_VIEW', 'SETTINGS_PRINTER_EDIT')
+    case 'backups':
+      return hasPermission(user, 'SETTINGS_STORE_EDIT')
     case 'users':
     case 'modules':
       return hasPermission(user, 'SETTINGS_USERS_MANAGE')
     case 'audit':
+    case 'shifts':
       return hasPermission(user, 'AUDIT_VIEW')
     case 'tax':
     case 'payments':
@@ -124,6 +128,8 @@ export function canEditSettingsSection(user: AuthUser | null | undefined, sectio
       return hasPermission(user, 'SETTINGS_BILLING_EDIT')
     case 'printer':
       return hasPermission(user, 'SETTINGS_PRINTER_EDIT')
+    case 'backups':
+      return hasPermission(user, 'SETTINGS_STORE_EDIT')
     case 'users':
     case 'modules':
       return hasPermission(user, 'SETTINGS_USERS_MANAGE')

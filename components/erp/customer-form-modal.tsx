@@ -15,6 +15,7 @@ export function CustomerFormModal({
   const [phone, setPhone] = useState('')
   const [type, setType] = useState<'b2c' | 'b2b'>('b2c')
   const [gstin, setGstin] = useState('')
+  const [address, setAddress] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -31,6 +32,7 @@ export function CustomerFormModal({
         phone: phone.trim() || undefined,
         type,
         gstin: gstin.trim() || undefined,
+        address: address.trim() || undefined,
       })
       onSaved(created.id)
       onClose()
@@ -91,6 +93,16 @@ export function CustomerFormModal({
             <TextInput value={gstin} onChange={setGstin} placeholder="29AABCS1234F1Z5" />
           </Field>
         )}
+        <Field label="Delivery address" optional hint="Saved for deliveries and printed on the customer receipt">
+          <textarea
+            className="bare"
+            value={address}
+            onChange={event => setAddress(event.target.value)}
+            placeholder="Building, street, area, city"
+            maxLength={500}
+            rows={3}
+          />
+        </Field>
       </div>
     </Modal>
   )

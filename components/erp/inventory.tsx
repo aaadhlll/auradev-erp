@@ -6,7 +6,7 @@ import {
 } from './ui'
 import { CAT_TONE, CAT_ICON, stockStatus, money, type Product } from '@/lib/erp-data'
 import {
-  fetchProduct, createProduct, updateProduct, adjustStock, recordBatchReceipt, fetchProductBatches,
+  fetchProduct, createProduct, updateProduct, adjustStock, recordOpeningStock, recordBatchReceipt, fetchProductBatches, fetchOpeningStock, fetchStockTransactions,
   fetchMovements, movementLabel, downloadProductsExport,
   type ProductFormData, type ApiCategory, type StockMovement, type InventoryBatch,
 } from '@/lib/inventory-api'
@@ -17,6 +17,8 @@ import { gstRateSelectOptions } from '@/lib/gst'
 import { canEditInventory, canImportInventory, canExportInventory, canViewInventoryCost } from '@/lib/rbac'
 import { useAuth } from '@/lib/auth-context'
 import { InventoryImportModal } from './inventory-import-modal'
+import { BarcodeGenerator } from './barcode-generator'
+import { InventoryHealth } from './inventory-health'
 
 const STATUS_BADGE = {
   in:  { tone: 'success', label: 'In Stock' },
@@ -25,7 +27,7 @@ const STATUS_BADGE = {
 } as const
 
 type StockTransaction = 'opening' | 'receipt' | 'adjustment' | 'count' | 'wastage'
-export type InventorySectionId = 'items' | StockTransaction
+export type InventorySectionId = 'items' | 'barcodes' | 'health' | 'movements' | StockTransaction
 
 const TRANSACTION_COPY: Record<StockTransaction, { title: string; description: string; action: string; icon: string }> = {
   opening: { title: 'Opening stock', description: 'Record the initial stock available when you start using Mercantile.', action: 'Record opening stock', icon: 'package-open' },
@@ -35,9 +37,8 @@ const TRANSACTION_COPY: Record<StockTransaction, { title: string; description: s
   wastage: { title: 'Damage & wastage', description: 'Remove damaged, expired, or wasted items from available stock.', action: 'Record wastage', icon: 'trash-2' },
 }
 
-function RowMenu({ onEdit, onHistory, onAdjust }: {
+function RowMenu({ onEdit, onAdjust }: {
   onEdit?: () => void
-  onHistory: () => void
   onAdjust?: () => void
 }) {
   const [open, setOpen] = useState(false)
@@ -45,13 +46,7 @@ function RowMenu({ onEdit, onHistory, onAdjust }: {
   useClickOutside(ref, () => setOpen(false), open)
   const canEdit = Boolean(onEdit || onAdjust)
 
-  if (!canEdit) {
-    return (
-      <button className="icon-btn" style={{ width: 30, height: 30 }} onClick={onHistory} aria-label="Movement history">
-        <Icon name="history" size={17} />
-      </button>
-    )
-  }
+  if (!canEdit) return null
 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
@@ -61,7 +56,6 @@ function RowMenu({ onEdit, onHistory, onAdjust }: {
       {open && (
         <div className="popover" style={{ position: 'absolute', top: 'calc(100% + 4px)', right: 0, minWidth: 184 }}>
           {onAdjust && <button className="menu-item" onClick={() => { setOpen(false); onAdjust() }}><Icon name="package-plus" size={16} className="lead" />Quick adjust stock</button>}
-          <button className="menu-item" onClick={() => { setOpen(false); onHistory() }}><Icon name="history" size={16} className="lead" />Movement history</button>
           {onEdit && <button className="menu-item" onClick={() => { setOpen(false); onEdit() }}><Icon name="pencil" size={16} className="lead" />Edit product</button>}
         </div>
       )}
@@ -261,7 +255,6 @@ function ProductModal({ onClose, onSave, categories, initialProduct }: {
         <Field label="Cost price (QAR)" optional><TextInput type="number" value={f.cost} onChange={set('cost')} placeholder="0" /></Field>
         <Field label="Tax rate"><Select value={f.tax} onChange={set('tax')} options={taxOptions} /></Field>
         <Field label="Reorder level"><TextInput type="number" value={f.reorder} onChange={set('reorder')} placeholder="0" /></Field>
-        {!isEdit && <Field label="Initial stock"><TextInput type="number" value={f.stock} onChange={set('stock')} placeholder="0" /></Field>}
         <div className="row gap8" style={{ gridColumn: '1 / -1', fontSize: 13, fontWeight: 600 }}><Checkbox checked={f.expiryTracked} onChange={checked => setF(s => ({ ...s, expiryTracked: checked }))} />Track batches and expiry dates for this item</div>
       </div>
     </Modal>
@@ -269,33 +262,76 @@ function ProductModal({ onClose, onSave, categories, initialProduct }: {
 }
 
 function StockAdjustmentWorkspace({
-  products, canEdit, mode, onAdjust, onHistory,
+  products, canEdit, mode, onAdjust, savedKey,
 }: {
-  products: Product[]; canEdit: boolean; mode: StockTransaction; onAdjust: (product: Product, mode: StockTransaction) => void; onHistory: (product: Product) => void
+  products: Product[]; canEdit: boolean; mode: StockTransaction; onAdjust: (product: Product, mode: StockTransaction) => void; savedKey: number
 }) {
+  const [creating, setCreating] = useState(false)
   const [productId, setProductId] = useState('')
-  const [moves, setMoves] = useState<StockMovement[]>([])
-  const [loadingMoves, setLoadingMoves] = useState(false)
+  const [movements, setMovements] = useState<StockMovement[]>([])
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [hasSearched, setHasSearched] = useState(false)
+  const [searchKey, setSearchKey] = useState(0)
+  const previousSavedKey = useRef(savedKey)
   const product = products.find(item => item.id === productId)
   const config = TRANSACTION_COPY[mode]
+  const movementTypes: Record<Exclude<StockTransaction, 'opening'>, string[]> = {
+    receipt: ['stock_receipt'], adjustment: ['adjustment_in', 'adjustment_out'], count: ['count_in', 'count_out'], wastage: ['waste'],
+  }
 
   useEffect(() => {
     if (!productId && products[0]) setProductId(products[0].id)
   }, [productId, products])
 
   useEffect(() => {
-    if (!product) { setMoves([]); return }
-    setLoadingMoves(true)
-    fetchMovements(product.id).then(setMoves).catch(() => setMoves([])).finally(() => setLoadingMoves(false))
-  }, [product])
+    if (previousSavedKey.current !== savedKey) {
+      previousSavedKey.current = savedKey
+      setCreating(false)
+    }
+  }, [savedKey])
+
+  useEffect(() => {
+    if (creating || !hasSearched) return
+    setLoading(true)
+    setLoadError(null)
+    fetchStockTransactions(movementTypes[mode as Exclude<StockTransaction, 'opening'>])
+      .then(setMovements)
+      .catch(e => setLoadError(e instanceof Error ? e.message : `Could not load ${config.title.toLowerCase()}`))
+      .finally(() => setLoading(false))
+  }, [creating, mode, savedKey, hasSearched, searchKey])
+
+  const records = movements.filter(move => !query.trim() || `${move.id} ${move.productName} ${move.sku} ${move.notes ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()))
+  const transactionSummary = useMemo(() => ({
+    records: movements.length,
+    items: new Set(movements.map(move => move.productName)).size,
+    added: movements.filter(move => move.signedDelta > 0).reduce((sum, move) => sum + move.signedDelta, 0),
+    removed: movements.filter(move => move.signedDelta < 0).reduce((sum, move) => sum + Math.abs(move.signedDelta), 0),
+  }), [movements])
+
+  if (!creating) return <div className="content-pad page-shell compact">
+    <div className="page-header"><div className="page-header-main"><div className="section-title">{config.title}</div><div className="section-sub">{config.description}</div></div>{canEdit && <Button size="sm" variant="primary" icon="plus" onClick={() => setCreating(true)}>Create new</Button>}</div>
+    <div className="kpi-grid transaction-status-grid">
+      <KpiCard label="Total records" value={String(hasSearched ? transactionSummary.records : 0)} icon="files" tone="tile-primary" />
+      <KpiCard label="Items affected" value={String(hasSearched ? transactionSummary.items : 0)} icon="package" tone="tile-info" />
+      <KpiCard label="Stock added" value={String(hasSearched ? transactionSummary.added : 0)} icon="arrow-down-to-line" tone="tile-success" />
+      <KpiCard label="Stock removed" value={String(hasSearched ? transactionSummary.removed : 0)} icon="arrow-up-from-line" tone="tile-warning" />
+    </div>
+    <Card noBody className="transaction-ledger">
+      <div className="filter-toolbar"><div className="toolbar-field"><TextInput size="sm" icon="search" value={query} onChange={setQuery} placeholder={`Search ${config.title.toLowerCase()}…`} /></div><Button size="sm" variant="primary" icon="search" onClick={() => { setHasSearched(true); setSearchKey(key => key + 1) }} disabled={loading}>{loading ? 'Searching…' : 'Search'}</Button></div>
+      {!hasSearched ? <div className="empty" style={{ minHeight: 240 }}><div className="ei"><Icon name="search" size={22} /></div><div style={{ fontWeight: 600, color: 'var(--fg)' }}>Search {config.title.toLowerCase()}</div><div>Enter a reference, item, or note if needed, then click Search to load records.</div></div> : loading ? <ContentLoader /> : loadError ? <div className="empty" style={{ minHeight: 240 }}><div style={{ color: 'var(--danger-fg)', fontWeight: 600 }}>{loadError}</div><Button size="sm" variant="outline" onClick={() => setHasSearched(false)}>Clear search</Button></div> : records.length === 0 ? <div className="empty" style={{ minHeight: 240 }}><div className="ei"><Icon name={config.icon} size={22} /></div><div style={{ fontWeight: 600, color: 'var(--fg)' }}>No {config.title.toLowerCase()} records</div><div>Create a transaction to record it in the inventory ledger.</div></div> : <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Transaction ID</th><th>Item</th><th>Transaction</th><th className="num">Quantity</th><th>Date & time</th><th>Notes</th></tr></thead><tbody>{records.map(move => <tr key={move.id}><td className="mono td-strong">TX-{move.id.slice(0, 8).toUpperCase()}</td><td><div className="cell-stack"><span className="td-strong">{move.productName}</span><span className="td-sub mono">{move.sku}</span></div></td><td>{movementLabel(move.movementType)}</td><td className="num tnum" style={{ color: move.signedDelta > 0 ? 'var(--success-fg)' : 'var(--danger-fg)', fontWeight: 700 }}>{move.signedDelta > 0 ? '+' : ''}{move.signedDelta}</td><td className="muted">{formatMoveDate(move.createdAt)}</td><td className="muted">{move.notes || '—'}</td></tr>)}</tbody></table></div>}
+    </Card>
+  </div>
 
   return (
     <div className="content-pad page-shell compact">
       <div className="page-header">
         <div className="page-header-main">
-          <div className="section-title">{config.title}</div>
+          <div className="section-title">New {config.title.replace(/s$/, '')}</div>
           <div className="section-sub">{config.description}</div>
         </div>
+        <Button size="sm" variant="outline" icon="arrow-left" onClick={() => setCreating(false)}>Back to records</Button>
       </div>
       <Card title={config.action} sub="Select an item and record this transaction in the stock ledger.">
         <div className="form-row">
@@ -304,25 +340,193 @@ function StockAdjustmentWorkspace({
             <div className="form-field-narrow"><Field label="On hand"><div className="input filled"><span className="tnum">{product.stock} {product.unit}</span></div></Field></div>
             <div className="form-field-narrow"><Field label="Reorder level"><div className="input filled"><span className="tnum">{product.reorder} {product.unit}</span></div></Field></div>
             <div style={{ alignSelf: 'end', display: 'flex', gap: 8 }}>
-              <Button variant="outline" icon="history" onClick={() => onHistory(product)}>View history</Button>
               {canEdit && <Button variant="primary" icon={config.icon} onClick={() => onAdjust(product, mode)}>{config.action}</Button>}
             </div>
           </>}
         </div>
       </Card>
-      {product && <Card title="Recent movements" sub={`${product.name} · ${product.sku}`} noBody>
-        {loadingMoves ? <ContentLoader /> : moves.length === 0 ? (
-          <div className="empty" style={{ minHeight: 180 }}><div className="ei"><Icon name="history" size={22} /></div><div style={{ fontWeight: 600, color: 'var(--fg)' }}>No movements yet</div><div>Stock changes for this item will appear here.</div></div>
-        ) : <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Transaction</th><th>Date & time</th><th>Notes</th><th className="num">Change</th></tr></thead><tbody>{moves.map(move => (
-          <tr key={move.id}>
-            <td><div className="row gap8"><Icon name={move.signedDelta > 0 ? 'arrow-down-to-line' : 'arrow-up-from-line'} size={16} style={{ color: move.signedDelta > 0 ? 'var(--success-fg)' : 'var(--danger-fg)' }} /><span className="td-strong">{movementLabel(move.movementType)}</span></div></td>
-            <td className="muted">{formatMoveDate(move.createdAt)}</td><td className="muted">{move.notes || '—'}</td>
-            <td className="num tnum" style={{ fontWeight: 700, color: move.signedDelta > 0 ? 'var(--success-fg)' : 'var(--danger-fg)' }}>{move.signedDelta > 0 ? '+' : ''}{move.signedDelta}</td>
-          </tr>
-        ))}</tbody></table></div>}
-      </Card>}
     </div>
   )
+}
+
+type OpeningStockRow = { id: string; productId: string; quantity: string; batchNumber: string; expiryDate: string }
+
+function newOpeningStockRow(): OpeningStockRow {
+  return { id: Math.random().toString(36).slice(2), productId: '', quantity: '', batchNumber: '', expiryDate: '' }
+}
+
+function OpeningStockWorkspace({ products, canEdit, onSave }: {
+  products: Product[]
+  canEdit: boolean
+  onSave: (lines: Array<{ productId: string; quantity: number; batchNumber?: string; expiryDate?: string }>) => Promise<void>
+}) {
+  const [creating, setCreating] = useState(false)
+  const [rows, setRows] = useState<OpeningStockRow[]>(() => [newOpeningStockRow()])
+  const [movements, setMovements] = useState<StockMovement[]>([])
+  const [loadingList, setLoadingList] = useState(false)
+  const [listError, setListError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [hasSearched, setHasSearched] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const updateRow = (id: string, patch: Partial<OpeningStockRow>) => setRows(current => current.map(row => row.id === id ? { ...row, ...patch } : row))
+  const removeRow = (id: string) => setRows(current => current.length === 1 ? current : current.filter(row => row.id !== id))
+
+  async function loadOpeningStock() {
+    setLoadingList(true)
+    setListError(null)
+    try {
+      setMovements(await fetchOpeningStock())
+    } catch (e) {
+      setListError(e instanceof Error ? e.message : 'Could not load opening stock')
+    } finally {
+      setLoadingList(false)
+    }
+  }
+
+  useEffect(() => { if (hasSearched) void loadOpeningStock() }, [hasSearched])
+
+  const records = useMemo(() => {
+    const grouped = new Map<string, StockMovement[]>()
+    for (const movement of movements) {
+      const key = movement.referenceId ?? movement.id
+      grouped.set(key, [...(grouped.get(key) ?? []), movement])
+    }
+    return [...grouped.entries()].map(([id, lines]) => ({
+      id,
+      createdAt: lines[0]?.createdAt ?? '',
+      itemCount: lines.length,
+      quantity: lines.reduce((total, line) => total + line.quantity, 0),
+      items: lines.map(line => line.productName).join(', '),
+    })).filter(record => !query.trim() || `${record.id} ${record.items}`.toLowerCase().includes(query.trim().toLowerCase()))
+  }, [movements, query])
+  const openingSummary = useMemo(() => ({
+    records: new Set(movements.map(move => move.referenceId ?? move.id)).size,
+    items: movements.length,
+    quantity: movements.reduce((total, move) => total + move.quantity, 0),
+  }), [movements])
+
+  async function submit() {
+    const filled = rows.filter(row => row.productId || row.quantity || row.batchNumber || row.expiryDate)
+    if (filled.length === 0) return setError('Add at least one item and quantity.')
+    if (filled.some(row => !row.productId || !Number.isFinite(Number(row.quantity)) || Number(row.quantity) <= 0)) {
+      return setError('Choose an item and enter a quantity greater than zero for every row.')
+    }
+    if (new Set(filled.map(row => row.productId)).size !== filled.length) return setError('Add each item only once. Combine its quantity in one row.')
+    setSaving(true)
+    setError(null)
+    try {
+      await onSave(filled.map(row => ({ productId: row.productId, quantity: Number(row.quantity), batchNumber: row.batchNumber, expiryDate: row.expiryDate })))
+      setRows([newOpeningStockRow()])
+      setCreating(false)
+      if (hasSearched) await loadOpeningStock()
+      else setHasSearched(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not record opening stock')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (!creating) return <div className="content-pad page-shell compact">
+    <div className="page-header"><div className="page-header-main"><div className="section-title">Opening stock</div><div className="section-sub">Opening balances recorded when you started using Mercantile</div></div>{canEdit && <Button variant="primary" size="sm" icon="plus" onClick={() => { setError(null); setCreating(true) }}>Create new</Button>}</div>
+    <div className="kpi-grid transaction-status-grid">
+      <KpiCard label="Opening records" value={String(hasSearched ? openingSummary.records : 0)} icon="files" tone="tile-primary" />
+      <KpiCard label="Items recorded" value={String(hasSearched ? openingSummary.items : 0)} icon="package" tone="tile-info" />
+      <KpiCard label="Total quantity" value={String(hasSearched ? openingSummary.quantity : 0)} icon="layers" tone="tile-success" />
+      <KpiCard label="Search results" value={String(hasSearched ? records.length : 0)} icon="search" tone="tile-warning" />
+    </div>
+    <Card noBody className="transaction-ledger">
+      <div className="filter-toolbar"><div className="toolbar-field"><TextInput size="sm" icon="search" value={query} onChange={setQuery} placeholder="Search opening stock ID or item…" /></div><Button size="sm" variant="primary" icon="search" onClick={() => { if (hasSearched) void loadOpeningStock(); else setHasSearched(true) }} disabled={loadingList}>{loadingList ? 'Searching…' : 'Search'}</Button></div>
+      {!hasSearched ? <div className="empty" style={{ minHeight: 240 }}><div className="ei"><Icon name="search" size={22} /></div><div style={{ fontWeight: 600, color: 'var(--fg)' }}>Search opening stock</div><div>Click Search to load previous opening-stock records.</div></div> : loadingList ? <ContentLoader /> : listError ? <div className="empty" style={{ minHeight: 240 }}><div style={{ color: 'var(--danger-fg)', fontWeight: 600 }}>{listError}</div><Button size="sm" variant="outline" onClick={() => void loadOpeningStock()}>Retry</Button></div> : records.length === 0 ? <div className="empty" style={{ minHeight: 240 }}><div className="ei"><Icon name="package-open" size={22} /></div><div style={{ fontWeight: 600, color: 'var(--fg)' }}>No opening stock records</div><div>Create an opening stock entry to record the inventory you already have.</div></div> : <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Opening stock ID</th><th>Items</th><th className="num">Total quantity</th><th>Date & time</th></tr></thead><tbody>{records.map(record => <tr key={record.id}><td className="td-strong mono">OS-{record.id.slice(0, 8).toUpperCase()}</td><td><div className="cell-stack"><span className="td-strong">{record.itemCount} item{record.itemCount === 1 ? '' : 's'}</span><span className="td-sub">{record.items}</span></div></td><td className="num tnum">{record.quantity}</td><td className="muted">{formatMoveDate(record.createdAt)}</td></tr>)}</tbody></table></div>}
+    </Card>
+  </div>
+
+  return <div className="content-pad page-shell compact">
+    <div className="page-header"><div className="page-header-main"><div className="section-title">New opening stock</div><div className="section-sub">Enter the stock on hand when you begin using Mercantile</div></div><Button size="sm" variant="outline" icon="arrow-left" onClick={() => setCreating(false)}>Back to records</Button></div>
+    <Card noBody className="transaction-entry">
+      <div className="tbl-wrap"><table className="tbl"><thead><tr><th style={{ width: 46 }}>#</th><th>Item</th><th>Unit</th><th>Batch</th><th>Expiry</th><th className="num">Qty</th><th className="num">Cost</th><th className="num">Total</th><th style={{ width: 46 }} /></tr></thead><tbody>{rows.map((row, index) => {
+        const product = products.find(item => item.id === row.productId)
+        const qty = Number(row.quantity) || 0
+        const hasBatch = Boolean(product?.expiryTracked)
+        return <tr key={row.id}><td className="muted tnum">{index + 1}</td><td style={{ minWidth: 230 }}><Select value={row.productId} onChange={value => updateRow(row.id, { productId: value, batchNumber: '', expiryDate: '' })} placeholder="Search and select an item" options={products.map(item => ({ value: item.id, label: item.name, sub: `${item.sku} · ${item.stock} ${item.unit} on hand` }))} /></td><td className="muted">{product ? product.unit : '—'}</td><td><input className="input sm" value={row.batchNumber} disabled={!hasBatch} onChange={e => updateRow(row.id, { batchNumber: e.target.value })} placeholder={hasBatch ? 'Batch no.' : '—'} /></td><td><input className="input sm" type="date" value={row.expiryDate} disabled={!hasBatch} onChange={e => updateRow(row.id, { expiryDate: e.target.value })} /></td><td><input className="input sm tnum" type="number" min="0" step={product?.unit === 'kg' ? '0.001' : '1'} value={row.quantity} onChange={e => updateRow(row.id, { quantity: e.target.value })} placeholder="0" /></td><td className="num muted tnum">{product ? money(product.cost) : '—'}</td><td className="num td-strong tnum">{product ? money(qty * product.cost) : '—'}</td><td><button className="icon-btn" disabled={rows.length === 1} onClick={() => removeRow(row.id)} aria-label="Remove row"><Icon name="trash-2" size={16} /></button></td></tr>
+      })}</tbody></table></div>
+      <div className="row" style={{ justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid var(--border)' }}><Button size="sm" variant="outline" icon="plus" onClick={() => setRows(current => [...current, newOpeningStockRow()])}>Add item</Button><div className="row gap12">{error && <span style={{ color: 'var(--danger-fg)', fontSize: 13 }}>{error}</span>}{canEdit && <Button variant="primary" icon="package-open" disabled={saving} onClick={() => void submit()}>{saving ? 'Saving…' : 'Save opening stock'}</Button>}</div></div>
+    </Card>
+  </div>
+}
+
+function StockMovementsWorkspace({ products }: { products: Product[] }) {
+  const [selectedProductId, setSelectedProductId] = useState('')
+  const [productId, setProductId] = useState('')
+  const [moves, setMoves] = useState<StockMovement[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [reloadKey, setReloadKey] = useState(0)
+  const product = products.find(item => item.id === productId)
+  const selectedProduct = products.find(item => item.id === selectedProductId)
+
+  const movementSummary = useMemo(() => ({
+    received: moves.filter(move => move.signedDelta > 0).reduce((total, move) => total + move.signedDelta, 0),
+    issued: moves.filter(move => move.signedDelta < 0).reduce((total, move) => total + Math.abs(move.signedDelta), 0),
+    adjustments: moves.filter(move => move.movementType.includes('adjustment')).length,
+  }), [moves])
+
+  useEffect(() => {
+    if (!productId) {
+      setMoves([])
+      setError(null)
+      return
+    }
+    setLoading(true)
+    setError(null)
+    fetchMovements(productId)
+      .then(setMoves)
+      .catch(e => setError(e instanceof Error ? e.message : 'Could not load stock movements'))
+      .finally(() => setLoading(false))
+  }, [productId, reloadKey])
+
+  function viewJourney() {
+    if (!selectedProductId) return
+    if (selectedProductId === productId) setReloadKey(key => key + 1)
+    else setProductId(selectedProductId)
+  }
+
+  return <div className="content-pad page-shell compact">
+    <div className="page-header"><div className="page-header-main"><div className="section-title">Stock movements</div><div className="section-sub">Trace one item from opening stock and receipts through sales, returns and adjustments</div></div></div>
+    <Card noBody>
+      <div className="filter-toolbar">
+        <div className="toolbar-field" style={{ minWidth: 360 }}>
+          <Field label="Item"><Select value={selectedProductId} onChange={setSelectedProductId} icon="package" placeholder="Search and select an item" options={products.map(item => ({ value: item.id, label: item.name, sub: `${item.sku} · ${item.stock} ${item.unit} on hand` }))} /></Field>
+        </div>
+        <Button size="sm" variant="primary" icon="search" onClick={viewJourney} disabled={!selectedProductId || loading} style={{ alignSelf: 'end' }}>{loading ? 'Loading…' : 'View journey'}</Button>
+        {selectedProduct && <div className="row gap16" style={{ alignSelf: 'end', paddingBottom: 4, marginLeft: 4 }}><span className="muted">Current on hand</span><strong className="tnum">{selectedProduct.stock} {selectedProduct.unit}</strong><span className="muted">Reorder at {selectedProduct.reorder} {selectedProduct.unit}</span></div>}
+      </div>
+    </Card>
+
+    <div className="kpi-grid transaction-status-grid">
+      <KpiCard label="Current stock" value={product ? `${product.stock} ${product.unit}` : '0'} icon="package" tone="tile-primary" />
+      <KpiCard label="Stock received" value={String(product ? movementSummary.received : 0)} icon="arrow-down-to-line" tone="tile-success" />
+      <KpiCard label="Stock issued" value={String(product ? movementSummary.issued : 0)} icon="arrow-up-from-line" tone="tile-warning" />
+      <KpiCard label="Adjustments" value={String(product ? movementSummary.adjustments : 0)} icon="sliders-horizontal" tone="tile-info" />
+    </div>
+
+    <Card noBody className="transaction-ledger">
+      {!product ? (
+        <div className="empty" style={{ minHeight: 270 }}><div className="ei"><Icon name="package-search" size={22} /></div><div style={{ fontWeight: 600, color: 'var(--fg)' }}>Choose an item and view its journey</div><div>Select a product above, then click View journey to load its complete stock history.</div></div>
+      ) : loading ? <ContentLoader /> : error ? (
+        <div className="empty" style={{ minHeight: 260 }}><div className="ei"><Icon name="alert-circle" size={22} /></div><div style={{ fontWeight: 600, color: 'var(--danger-fg)' }}>{error}</div><Button size="sm" variant="outline" onClick={viewJourney}>Try again</Button></div>
+      ) : moves.length === 0 ? (
+        <div className="empty" style={{ minHeight: 260 }}><div className="ei"><Icon name="history" size={22} /></div><div style={{ fontWeight: 600, color: 'var(--fg)' }}>No stock movements yet</div><div>Stock receipts, sales and adjustments will appear here.</div></div>
+      ) : <>
+        <div style={{ padding: '16px 16px 0' }}><div className="td-strong">{product.name} · movement timeline</div><div className="td-sub">Newest activity first · every change updates the running balance</div></div>
+        <div className="tbl-wrap"><table className="tbl"><thead><tr><th>Activity</th><th>Date & time</th><th>Reference / notes</th><th className="num">Movement</th><th className="num">Balance after</th></tr></thead><tbody>{moves.map(move => (
+          <tr key={move.id}><td><div className="row gap8"><IconTile tone={move.signedDelta > 0 ? 'tile-success' : 'tile-warning'} size={28} icon={move.signedDelta > 0 ? 'arrow-down-to-line' : 'arrow-up-from-line'} /><div className="cell-stack"><span className="td-strong">{movementLabel(move.movementType)}</span><span className="td-sub mono">{move.referenceId ? `REF-${move.referenceId.slice(0, 8).toUpperCase()}` : 'Manual transaction'}</span></div></div></td><td className="muted">{formatMoveDate(move.createdAt)}</td><td className="muted">{move.notes || '—'}</td><td className="num tnum" style={{ fontWeight: 700, color: move.signedDelta > 0 ? 'var(--success-fg)' : 'var(--danger-fg)' }}>{move.signedDelta > 0 ? '+' : ''}{move.signedDelta}</td><td className="num tnum td-strong">{move.quantityAfter} {product.unit}</td></tr>
+        ))}</tbody></table></div>
+        <div className="row" style={{ justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid var(--border)' }}><span className="muted" style={{ fontSize: 12.5 }}>{moves.length} movement{moves.length === 1 ? '' : 's'} for {product.name}</span><span className="muted tnum" style={{ fontSize: 12.5 }}>Current balance: {product.stock} {product.unit}</span></div>
+      </>}
+    </Card>
+  </div>
 }
 
 export function Inventory({
@@ -343,31 +547,34 @@ export function Inventory({
   const canExport = canExportInventory(user)
   const showCost = canViewInventoryCost(user)
   const invalidateCatalog = useInvalidateCatalog()
-  const productsQuery = useProductsQuery()
-  const categoriesQuery = useCategoriesQuery()
-  const products = productsQuery.data ?? []
-  const categories = categoriesQuery.data ?? []
-  const loading = productsQuery.isPending || categoriesQuery.isPending
-  const initialLoading = loading && products.length === 0
-  const error = productsQuery.error?.message ?? categoriesQuery.error?.message ?? null
   const [q, setQ] = useState('')
   const [cat, setCat] = useState('all')
   const [unit, setUnit] = useState('all')
   const [status, setStatus] = useState('all')
+  const [itemSearchRequested, setItemSearchRequested] = useState(false)
   const [sort, setSort] = useState<{ key: keyof Product; dir: 'asc' | 'desc' }>({ key: 'name', dir: 'asc' })
   const [page, setPage] = useState(0)
   const [sel, setSel] = useState<Set<string>>(new Set())
   const [adjust, setAdjust] = useState<{ product: Product; mode: StockTransaction } | null>(null)
-  const [history, setHistory] = useState<Product | null>(null)
+  const [transactionSaved, setTransactionSaved] = useState(0)
   const [addOpen, setAddOpen] = useState(false)
   const [importOpen, setImportOpen] = useState(false)
   const [editProduct, setEditProduct] = useState<Product | null>(null)
   const [exporting, setExporting] = useState(false)
   const PER = 12
+  const catalogRequested = (section !== 'items' && section !== 'health') || itemSearchRequested || addOpen || Boolean(editProduct)
+  const productsQuery = useProductsQuery(catalogRequested)
+  const categoriesQuery = useCategoriesQuery(catalogRequested)
+  const products = productsQuery.data ?? []
+  const categories = categoriesQuery.data ?? []
+  const loading = productsQuery.isPending || categoriesQuery.isPending
+  const initialLoading = loading && products.length === 0
+  const error = productsQuery.error?.message ?? categoriesQuery.error?.message ?? null
 
   const summary = useMemo(() => computeInventorySummary(products), [products])
 
   function refetch() {
+    setItemSearchRequested(true)
     void productsQuery.refetch()
     void categoriesQuery.refetch()
   }
@@ -377,6 +584,7 @@ export function Inventory({
     setQ(prefillQuery)
     setCat('all')
     setPage(0)
+    setItemSearchRequested(true)
     onPrefillConsumed?.()
   }, [prefillKey, prefillQuery, onPrefillConsumed])
 
@@ -430,8 +638,8 @@ export function Inventory({
         await adjustStock(target.id, delta, reason, notes)
       }
       await invalidateCatalog.products()
-      setHistory(h => (h?.id === target.id ? { ...h, stock: Math.max(0, h.stock + delta) } : h))
       setAdjust(null)
+      setTransactionSaved(key => key + 1)
       toast(`${delta > 0 ? '+' : ''}${delta} ${target.unit} · ${target.name}`, { icon: 'package-check' })
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to adjust stock'
@@ -493,11 +701,21 @@ export function Inventory({
     }
   }
 
+  if (section === 'movements') return <StockMovementsWorkspace products={products} />
+
+  if (section === 'barcodes') return <BarcodeGenerator products={products} />
+  if (section === 'health') return <InventoryHealth />
+
+  if (section === 'opening') return <OpeningStockWorkspace products={products} canEdit={canEdit} onSave={async lines => {
+    await recordOpeningStock(lines)
+    await invalidateCatalog.products()
+    toast(`${lines.length} item${lines.length === 1 ? '' : 's'} added to opening stock`, { icon: 'package-check' })
+  }} />
+
   if (section !== 'items') {
     return <>
-      <StockAdjustmentWorkspace products={products} canEdit={canEdit} mode={section} onAdjust={(product, mode) => setAdjust({ product, mode })} onHistory={setHistory} />
+      <StockAdjustmentWorkspace products={products} canEdit={canEdit} mode={section} savedKey={transactionSaved} onAdjust={(product, mode) => setAdjust({ product, mode })} />
       {canEdit && adjust && <AdjustModal product={adjust.product} mode={adjust.mode} onClose={() => setAdjust(null)} onSave={doAdjust} />}
-      {history && <HistoryDrawer product={history} onClose={() => setHistory(null)} />}
     </>
   }
 
@@ -507,34 +725,24 @@ export function Inventory({
         <div className="page-header-main">
           <div className="section-title">Item master</div>
           <div className="section-sub">
-            {initialLoading ? 'Loading item master…' : `${products.length} items · ${categories.length} categories`}
+            {!itemSearchRequested && !addOpen ? 'Search when you need to load the item catalogue' : initialLoading ? 'Loading item master…' : `${products.length} items · ${categories.length} categories`}
           </div>
         </div>
         {(canImport || canExport || canEdit) && (
         <div className="row gap8 page-header-actions" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {canImport && <Button size="sm" icon="upload" onClick={() => setImportOpen(true)}>Bulk import</Button>}
           {canExport && <Button size="sm" icon="download" disabled={exporting} onClick={() => void doExport(false)}>{exporting ? 'Exporting…' : 'Export'}</Button>}
-          {canEdit && <Button size="sm" variant="primary" icon="plus" onClick={() => setAddOpen(true)}>Add item</Button>}
+          {canEdit && <Button size="sm" variant="primary" icon="plus" onClick={() => { setItemSearchRequested(true); setAddOpen(true) }}>Add item</Button>}
         </div>
         )}
       </div>
 
       {!initialLoading && (
-        <div className="kpi-grid">
-          <KpiCard label="Total products" value={String(summary.totalProducts)} icon="package" tone="tile-primary" />
-          {showCost ? (
-            <KpiCard label="Stock value (cost)" value={money(summary.costValue)} icon="wallet" tone="tile-info" vs={`${summary.productsWithCost} with cost price`} />
-          ) : (
-            <KpiCard label="Units on hand" value={summary.totalUnits.toLocaleString('en-IN')} icon="layers" tone="tile-info" />
-          )}
-          <KpiCard label="Stock value (selling)" value={money(summary.sellingValue)} icon="wallet" tone="tile-success" vs={`MRP ${money(summary.mrpValue)}`} />
-          <KpiCard
-            label="Stock alerts"
-            value={String(summary.lowStockCount + summary.outOfStockCount)}
-            icon="alert-triangle"
-            tone="tile-warning"
-            vs={`${summary.lowStockCount} low · ${summary.outOfStockCount} out`}
-          />
+        <div className="kpi-grid inventory-status-grid">
+          <KpiCard label="Total items" value={String(itemSearchRequested ? summary.totalProducts : 0)} icon="package" tone="tile-primary" active={status === 'all'} onClick={() => { setStatus('all'); setPage(0) }} vs={itemSearchRequested ? `${summary.totalUnits.toLocaleString('en-IN')} units on hand` : undefined} />
+          <KpiCard label="In stock" value={String(itemSearchRequested ? summary.totalProducts - summary.lowStockCount - summary.outOfStockCount : 0)} icon="circle-check" tone="tile-success" active={status === 'in'} onClick={() => { setStatus('in'); setPage(0) }} />
+          <KpiCard label="Low stock" value={String(itemSearchRequested ? summary.lowStockCount : 0)} icon="alert-triangle" tone="tile-warning" active={status === 'low'} onClick={() => { setStatus('low'); setPage(0) }} vs={itemSearchRequested ? 'At or below reorder level' : undefined} />
+          <KpiCard label="Out of stock" value={String(itemSearchRequested ? summary.outOfStockCount : 0)} icon="circle-x" tone="tile-danger" active={status === 'out'} onClick={() => { setStatus('out'); setPage(0) }} />
         </div>
       )}
 
@@ -551,7 +759,7 @@ export function Inventory({
         </div>
       )}
 
-      <Card noBody>
+      <Card noBody className="inventory-ledger">
         {initialLoading ? (
           <ContentLoader />
         ) : (
@@ -569,6 +777,7 @@ export function Inventory({
             options={[{ value: 'all', label: 'All units' }, { value: 'pcs', label: 'Unit-based' }, { value: 'kg', label: 'Weight-based' }]} />
           <Select size="sm" width={150} value={status} onChange={v => { setStatus(v); setPage(0) }}
             options={[{ value: 'all', label: 'All statuses' }, { value: 'in', label: 'In stock' }, { value: 'low', label: 'Low stock' }, { value: 'out', label: 'Out of stock' }]} />
+          <Button size="sm" variant="primary" icon="search" onClick={() => setItemSearchRequested(true)} disabled={initialLoading}>{initialLoading ? 'Searching…' : 'Search'}</Button>
           <div style={{ flex: 1 }} />
           {canEdit && sel.size > 0 && (
             <div className="row gap8">
@@ -596,7 +805,9 @@ export function Inventory({
               </tr>
             </thead>
             <tbody>
-              {error ? (
+              {!itemSearchRequested ? (
+                <tr><td colSpan={10} style={{ textAlign: 'center', padding: '48px 0', color: 'var(--fg-subtle)', fontSize: 13 }}><Icon name="search" size={18} style={{ marginBottom: 8 }} /><div style={{ fontWeight: 600, color: 'var(--fg)', marginBottom: 3 }}>Search item master</div><div>Use filters if needed, then click Search to load products.</div></td></tr>
+              ) : error ? (
                 <tr>
                   <td colSpan={10} style={{ textAlign: 'center', padding: '48px 0' }}>
                     <div style={{ color: 'var(--danger-fg)', marginBottom: 10, fontSize: 13 }}>{error}</div>
@@ -633,7 +844,6 @@ export function Inventory({
                     <td><Badge tone={sb.tone} dot>{sb.label}</Badge></td>
                     <td>
                       <RowMenu
-                        onHistory={() => setHistory(p)}
                         onAdjust={canEdit ? () => setAdjust({ product: p, mode: 'adjustment' }) : undefined}
                         onEdit={canEdit ? () => setEditProduct(p) : undefined}
                       />
@@ -660,7 +870,6 @@ export function Inventory({
       </Card>
 
       {canEdit && adjust && <AdjustModal product={adjust.product} mode={adjust.mode} onClose={() => setAdjust(null)} onSave={doAdjust} />}
-      {history && <HistoryDrawer product={history} onClose={() => setHistory(null)} />}
       {canEdit && addOpen && <ProductModal categories={categories} onClose={() => setAddOpen(false)} onSave={doAddProduct} />}
       {canEdit && editProduct && <ProductModal categories={categories} initialProduct={editProduct} onClose={() => setEditProduct(null)} onSave={doUpdateProduct} />}
       {canImport && importOpen && (

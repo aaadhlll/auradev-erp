@@ -4,28 +4,32 @@ import { loginViaApi } from './helpers'
 test.describe('Purchases', () => {
   test.beforeEach(async ({ page }) => {
     await loginViaApi(page)
-    await page.getByText('Purchases').click()
-    await expect(page.locator('.sb-nav.active')).toContainText('Purchases')
+    await page.getByRole('button', { name: /open mercantile modules/i }).click()
+    await page.getByRole('button', { name: /^procurement/i }).click()
+    await page.getByRole('button', { name: /^transactions/i }).click()
+    await page.getByRole('button', { name: /purchase orders/i }).click()
+    await expect(page.locator('.sb-nav.active')).toContainText('Purchase orders')
     await page.waitForLoadState('networkidle')
   })
 
   // ── Page structure ────────────────────────────────────────────────────────────
 
   test('purchases page loads without error', async ({ page }) => {
-    await expect(page.getByText('Purchases').first()).toBeVisible()
+    await expect(page.getByText('Purchase orders').first()).toBeVisible()
     await expect(page.locator('body')).not.toContainText('Something went wrong')
   })
 
   test('KPI cards are all visible', async ({ page }) => {
-    await expect(page.getByText('Purchase value')).toBeVisible()
-    await expect(page.getByText('Awaiting payment')).toBeVisible()
-    await expect(page.getByText('Paid')).toBeVisible()
-    await expect(page.getByText('Suppliers')).toBeVisible()
+    await expect(page.getByRole('button', { name: /total orders/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /new drafts/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /awaiting delivery/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: /completed/i })).toBeVisible()
   })
 
-  test('tab bar shows Purchase bills and Suppliers tabs', async ({ page }) => {
-    await expect(page.getByRole('button', { name: /purchase bills/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /suppliers/i })).toBeVisible()
+  test('sidebar opens Supplier master', async ({ page }) => {
+    await page.getByRole('button', { name: /^master/i }).click()
+    await page.getByRole('button', { name: /supplier master/i }).click()
+    await expect(page.locator('.sb-nav.active')).toContainText('Supplier master')
   })
 
   // ── Purchase bills list ───────────────────────────────────────────────────────
@@ -36,7 +40,7 @@ test.describe('Purchases', () => {
   })
 
   test('search field is present and accepts input', async ({ page }) => {
-    const search = page.getByPlaceholder('Search purchase no…')
+    const search = page.getByPlaceholder('Search purchase order ID…')
     await expect(search).toBeVisible()
     await search.fill('PO')
     await search.clear()
@@ -46,23 +50,8 @@ test.describe('Purchases', () => {
     await expect(page.getByText('All suppliers')).toBeVisible()
   })
 
-  test('status filter chips are all rendered', async ({ page }) => {
-    await expect(page.getByRole('button', { name: /^all/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /^draft/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /pending grn/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /^billed/i })).toBeVisible()
-    await expect(page.getByRole('button', { name: /^paid/i })).toBeVisible()
-  })
-
-  test('clicking a status chip filters the list', async ({ page }) => {
-    await page.getByRole('button', { name: /^draft/i }).click()
-    // chip becomes active
-    await expect(page.getByRole('button', { name: /^draft/i })).toHaveClass(/\bon\b/)
-    // table reloads without error
-    await page.waitForLoadState('networkidle')
-    await expect(page.locator('body')).not.toContainText('Something went wrong')
-    // reset
-    await page.getByRole('button', { name: /^all/i }).click()
+  test('status filter is present', async ({ page }) => {
+    await expect(page.getByText('All statuses')).toBeVisible()
   })
 
   // ── Row click → detail drawer ─────────────────────────────────────────────────
@@ -81,7 +70,9 @@ test.describe('Purchases', () => {
     const firstRow = page.locator('table:visible tbody tr').first()
     await firstRow.click()
     await expect(page.locator('.drawer-overlay')).toBeVisible({ timeout: 8000 })
-    await page.getByRole('button', { name: 'Close' }).click()
+    // Next.js development tools can sit above the page in local development.
+    // Keyboard activation still verifies the actual accessible Close control.
+    await page.getByRole('button', { name: 'Close' }).press('Enter')
     await expect(page.locator('.drawer-overlay')).not.toBeVisible()
   })
 
@@ -93,27 +84,29 @@ test.describe('Purchases', () => {
     await expect(page.locator('.drawer-overlay')).not.toBeVisible()
   })
 
-  // ── Record purchase button ────────────────────────────────────────────────────
+  // ── Create purchase button ────────────────────────────────────────────────────
 
-  test('Record purchase button is visible and opens the form modal', async ({ page }) => {
-    const btn = page.getByRole('button', { name: /record purchase/i })
+  test('Create new button is visible and opens the form modal', async ({ page }) => {
+    const btn = page.getByRole('button', { name: /create new/i })
     await expect(btn).toBeVisible()
     await btn.click()
     await expect(page.locator('.overlay')).toBeVisible({ timeout: 6000 })
     await page.keyboard.press('Escape')
   })
 
-  // ── Suppliers tab ─────────────────────────────────────────────────────────────
+  // ── Supplier master ────────────────────────────────────────────────────────────
 
-  test('switching to Suppliers tab shows supplier list', async ({ page }) => {
-    await page.getByRole('button', { name: /suppliers/i }).click()
+  test('switching to Supplier master shows supplier list', async ({ page }) => {
+    await page.getByRole('button', { name: /^master/i }).click()
+    await page.getByRole('button', { name: /supplier master/i }).click()
     await page.waitForLoadState('networkidle')
-    await expect(page.locator('.sb-nav.active')).toContainText('Purchases')
+    await expect(page.locator('.sb-nav.active')).toContainText('Supplier master')
     await expect(page.locator('body')).not.toContainText('Something went wrong')
   })
 
-  test('Add supplier button appears on Suppliers tab', async ({ page }) => {
-    await page.getByRole('button', { name: /suppliers/i }).click()
-    await expect(page.getByRole('button', { name: /add supplier/i })).toBeVisible()
+  test('Add supplier button appears in Supplier master', async ({ page }) => {
+    await page.getByRole('button', { name: /^master/i }).click()
+    await page.getByRole('button', { name: /supplier master/i }).click()
+    await expect(page.getByRole('button', { name: /add supplier/i }).first()).toBeVisible()
   })
 })

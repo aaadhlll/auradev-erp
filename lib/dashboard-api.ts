@@ -128,6 +128,13 @@ interface ActivityRow {
   createdAt: string
 }
 
+interface DashboardActionRow { type: string; title: string; detail: string; tone: string; target: string }
+interface DashboardOperationsRow {
+  cashSummary?: { cash: number; upi: number; card: number; total: number }
+  creditSummary?: { customers: number; outstanding: number; topCustomers?: { id: string; name: string; phone?: string | null; outstanding: number }[] }
+  actions?: DashboardActionRow[]
+}
+
 interface DashboardApiResponse {
   tenantName: string
   userName: string
@@ -138,6 +145,7 @@ interface DashboardApiResponse {
   recentBills: RecentBillRow[]
   lowStock: LowStockRow[]
   activity: ActivityRow[]
+  operations?: DashboardOperationsRow
   aiBrief: string
 }
 
@@ -147,6 +155,7 @@ interface DashboardShellApiResponse {
   lowStockCount: number
   lowStock: LowStockRow[]
   activity: ActivityRow[]
+  operations?: DashboardOperationsRow
 }
 
 interface DashboardMetricsApiResponse {
@@ -164,6 +173,7 @@ export interface DashboardShellData {
   lowStockCount: number
   lowStock: DashboardData['lowStock']
   activity: DashboardData['activity']
+  operations: DashboardData['operations']
 }
 
 export interface DashboardMetricsData {
@@ -226,6 +236,11 @@ export interface DashboardData {
     tone: string
     time: string
   }[]
+  operations: {
+    cash: { cash: number; upi: number; card: number; total: number }
+    credit: { customers: number; outstanding: number; topCustomers: { id: string; name: string; phone?: string | null; outstanding: number }[] }
+    actions: DashboardActionRow[]
+  }
   aiBrief: string
 }
 
@@ -295,6 +310,14 @@ function mapActivityRows(rows: ActivityRow[] | undefined): DashboardData['activi
   }))
 }
 
+function mapOperations(raw: DashboardOperationsRow | undefined): DashboardData['operations'] {
+  return {
+    cash: { cash: Number(raw?.cashSummary?.cash ?? 0), upi: Number(raw?.cashSummary?.upi ?? 0), card: Number(raw?.cashSummary?.card ?? 0), total: Number(raw?.cashSummary?.total ?? 0) },
+    credit: { customers: Number(raw?.creditSummary?.customers ?? 0), outstanding: Number(raw?.creditSummary?.outstanding ?? 0), topCustomers: (raw?.creditSummary?.topCustomers ?? []).map(customer => ({ id: customer.id, name: customer.name, phone: customer.phone, outstanding: Number(customer.outstanding ?? 0) })) },
+    actions: raw?.actions ?? [],
+  }
+}
+
 function mapRecentBills(rows: RecentBillRow[] | undefined): DashboardData['recentBills'] {
   return (rows ?? []).map(b => ({
     id: b.id,
@@ -359,6 +382,7 @@ function mapShell(raw: DashboardShellApiResponse): DashboardShellData {
     lowStockCount: Number(raw.lowStockCount ?? 0),
     lowStock: mapLowStock(raw.lowStock),
     activity: mapActivityRows(raw.activity),
+    operations: mapOperations(raw.operations),
   }
 }
 
@@ -411,6 +435,7 @@ export function composeDashboard(shell: DashboardShellData, metrics: DashboardMe
     recentBills: metrics.recentBills,
     lowStock: shell.lowStock,
     activity: shell.activity,
+    operations: shell.operations,
     aiBrief: metrics.aiBrief,
   }
 }
@@ -458,6 +483,7 @@ function mapDashboard(raw: DashboardApiResponse): DashboardData {
     recentBills: mapRecentBills(raw.recentBills),
     lowStock: mapLowStock(raw.lowStock),
     activity: mapActivityRows(raw.activity),
+    operations: mapOperations(raw.operations),
     aiBrief: raw.aiBrief ?? 'Dashboard data loaded.',
   }
 }
@@ -555,6 +581,7 @@ export function mergeDashboardLive(current: DashboardData, live: DashboardApiRes
       lowStockCount: current.kpis.lowStockCount,
       lowStock: current.lowStock,
       activity: current.activity,
+      operations: current.operations,
     },
     metrics,
   )

@@ -11,8 +11,13 @@ export interface AuditEntry {
   createdAt: string
 }
 
-export async function fetchAuditLog(limit = 50): Promise<AuditEntry[]> {
-  return apiFetch<AuditEntry[]>(`/api/v1/audit?limit=${limit}`)
+export async function fetchAuditLog(limit = 100, dates?: { fromDate?: string; toDate?: string }): Promise<AuditEntry[]> {
+  const query = new URLSearchParams({ limit: String(limit) })
+  if (dates?.fromDate && dates?.toDate) {
+    query.set('fromDate', dates.fromDate)
+    query.set('toDate', dates.toDate)
+  }
+  return apiFetch<AuditEntry[]>(`/api/v1/audit?${query}`)
 }
 
 export function formatAuditAction(entry: AuditEntry): string {

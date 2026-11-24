@@ -6,14 +6,18 @@ import { useAuth } from '@/lib/auth-context'
 import { queryKeys } from './keys'
 
 const HELD_BILLS_STALE_MS = 30_000
+const HELD_BILLS_POLL_MS = 30_000
 
-export function useHeldBillsQuery() {
+export function useHeldBillsQuery(active = true) {
   const { user } = useAuth()
   return useQuery({
     queryKey: queryKeys.heldBills(),
     queryFn: fetchHeldBills,
-    enabled: Boolean(user),
+    enabled: Boolean(user) && active,
     staleTime: HELD_BILLS_STALE_MS,
+    refetchOnWindowFocus: false,
+    refetchInterval: active ? HELD_BILLS_POLL_MS : false,
+    refetchIntervalInBackground: false,
   })
 }
 

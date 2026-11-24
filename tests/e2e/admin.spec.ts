@@ -42,7 +42,7 @@ test.describe('Admin profile & Settings', () => {
   test('Settings menu item navigates to Settings page', async ({ page }) => {
     await page.locator('.sb-user').click()
     await page.getByRole('menuitem', { name: /settings/i }).click()
-    await expect(page.getByText('Settings').first()).toBeVisible({ timeout: 8000 })
+    await expect(page.getByRole('button', { name: /store profile/i })).toBeVisible({ timeout: 8000 })
     await expect(page.locator('body')).not.toContainText('Something went wrong')
   })
 
@@ -53,15 +53,15 @@ test.describe('Admin profile & Settings', () => {
       await loginViaApi(page)
       await page.locator('.sb-user').click()
       await page.getByRole('menuitem', { name: /settings/i }).click()
-      await expect(page.getByText('Settings').first()).toBeVisible({ timeout: 8000 })
+      await expect(page.getByRole('button', { name: /store profile/i })).toBeVisible({ timeout: 8000 })
     })
 
     test('settings nav shows all sections', async ({ page }) => {
       await expect(page.getByRole('button', { name: /store profile/i })).toBeVisible()
       await expect(page.getByRole('button', { name: /billing & pos/i })).toBeVisible()
-      await expect(page.getByRole('button', { name: /printer settings/i })).toBeVisible()
-      await expect(page.getByRole('button', { name: /user management/i })).toBeVisible()
-      await expect(page.getByRole('button', { name: /audit log/i })).toBeVisible()
+      await expect(page.getByRole('button', { name: /receipt output/i })).toBeVisible()
+      await expect(page.getByRole('button', { name: /team access/i })).toBeVisible()
+      await expect(page.getByRole('button', { name: /activity log/i })).toBeVisible()
     })
 
     test('Store Profile section loads by default', async ({ page }) => {
@@ -76,28 +76,28 @@ test.describe('Admin profile & Settings', () => {
       await expect(page.locator('body')).not.toContainText('Something went wrong')
     })
 
-    test('switching to Printer Settings section works', async ({ page }) => {
-      await page.getByRole('button', { name: /printer settings/i }).click()
-      await expect(page.getByRole('button', { name: /printer settings/i })).toHaveClass(/\bactive\b/)
+    test('switching to Receipt output section works', async ({ page }) => {
+      await page.getByRole('button', { name: /receipt output/i }).click()
+      await expect(page.getByRole('button', { name: /receipt output/i })).toHaveClass(/\bactive\b/)
       await expect(page.locator('body')).not.toContainText('Something went wrong')
     })
 
-    test('User Management section shows team members table', async ({ page }) => {
-      await page.getByRole('button', { name: /user management/i }).click()
+    test('Team access section shows team members table', async ({ page }) => {
+      await page.getByRole('button', { name: /team access/i }).click()
       await page.waitForLoadState('networkidle')
-      await expect(page.getByRole('button', { name: /user management/i })).toHaveClass(/\bactive\b/)
+      await expect(page.getByRole('button', { name: /team access/i })).toHaveClass(/\bactive\b/)
       await expect(page.locator('table:visible tbody tr').first()).toBeVisible({ timeout: 8000 })
     })
 
-    test('User Management section has Add user button', async ({ page }) => {
-      await page.getByRole('button', { name: /user management/i }).click()
+    test('Team access section has Add user button', async ({ page }) => {
+      await page.getByRole('button', { name: /team access/i }).click()
       await expect(page.getByRole('button', { name: /add user/i })).toBeVisible()
     })
 
-    test('Audit Log section loads entries', async ({ page }) => {
-      await page.getByRole('button', { name: /audit log/i }).click()
+    test('Activity log section loads entries', async ({ page }) => {
+      await page.getByRole('button', { name: /activity log/i }).click()
       await page.waitForLoadState('networkidle')
-      await expect(page.getByRole('button', { name: /audit log/i })).toHaveClass(/\bactive\b/)
+      await expect(page.getByRole('button', { name: /activity log/i })).toHaveClass(/\bactive\b/)
       await expect(page.locator('body')).not.toContainText('Something went wrong')
     })
   })

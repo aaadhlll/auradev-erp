@@ -8,12 +8,12 @@ import { queryKeys } from './keys'
 
 const CUSTOMERS_STALE_MS = 10 * 60_000
 
-export function useCustomersQuery() {
+export function useCustomersQuery(enabled = true) {
   const { user } = useAuth()
   return useQuery({
     queryKey: queryKeys.customers(),
     queryFn: fetchCustomers,
-    enabled: Boolean(user),
+    enabled: Boolean(user) && enabled,
     staleTime: CUSTOMERS_STALE_MS,
   })
 }

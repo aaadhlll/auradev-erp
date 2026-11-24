@@ -6,11 +6,21 @@ import type { PurchaseDetail } from '@/lib/purchases-api'
 import { statusLabel, statusTone } from '@/lib/purchases-api'
 import { printPurchase, savePurchaseJpeg, savePurchasePdf } from '@/lib/purchase-export'
 import { useReceiptMeta, useReceiptPrintOptions } from '@/lib/queries/use-settings'
+import { useQuery } from '@tanstack/react-query'
+import { fetchPurchaseReceipts, type PurchaseReceipt } from '@/lib/purchases-api'
 
 function formatDate(iso: string): string {
   return new Date(iso + (iso.includes('T') ? '' : 'T00:00:00')).toLocaleDateString('en-IN', {
     day: 'numeric', month: 'short', year: 'numeric',
   })
+}
+
+function printGrn(receipt: PurchaseReceipt) {
+  const win = window.open('', '_blank', 'width=1100,height=760')
+  if (!win) throw new Error('The print window was blocked')
+  const rows = receipt.items.map((item, index) => `<tr><td>${index + 1}</td><td><b>${item.productName}</b><br><small>${item.sku}</small></td><td>${item.orderedQuantity ?? '—'}</td><td><b>${item.quantity}</b></td><td>${item.batchNumber ?? '—'}</td><td>${item.expiryDate ?? '—'}</td></tr>`).join('')
+  win.document.write(`<!doctype html><title>${receipt.grnNo}</title><style>@page{size:A4 landscape;margin:14mm}body{font:13px Arial;color:#17211d}h1{color:#1f7a63;margin:0}header{display:flex;justify-content:space-between;border-bottom:2px solid #1f7a63;padding-bottom:14px;margin-bottom:20px}.meta{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:18px}table{width:100%;border-collapse:collapse}th{background:#e9f3ee;text-align:left}th,td{border:1px solid #cfd7d2;padding:9px}small{color:#64706a}.sign{display:flex;justify-content:space-between;margin-top:72px}.sign span{border-top:1px solid #17211d;width:170px;text-align:center;padding-top:7px}</style><header><div><h1>Mercantile</h1><div>Goods Receipt Note</div></div><div><h1>${receipt.grnNo}</h1><div>${new Date(receipt.createdAt).toLocaleString()}</div></div></header><div class="meta"><div><b>Supplier</b><br>${receipt.supplierName ?? '—'}</div><div><b>Purchase order</b><br>${receipt.purchaseNo ?? '—'}</div><div><b>Received by</b><br>${receipt.receivedBy ?? '—'}</div><div><b>Notes</b><br>${receipt.notes ?? '—'}</div></div><table><thead><tr><th>#</th><th>Item</th><th>Ordered</th><th>Received</th><th>Batch</th><th>Expiry</th></tr></thead><tbody>${rows}</tbody></table><div class="sign"><span>Prepared by</span><span>Verified by</span><span>Authorized by</span></div><script>window.onload=()=>window.print()</script>`)
+  win.document.close()
 }
 
 export function PurchaseDetailDrawer({
@@ -21,6 +31,8 @@ export function PurchaseDetailDrawer({
   onClose,
   onConfirm,
   onReceive,
+  onCancel,
+  onReturn,
   onPay,
   onDelete,
 }: {
@@ -31,12 +43,15 @@ export function PurchaseDetailDrawer({
   onClose: () => void
   onConfirm?: () => void
   onReceive?: () => void
+  onCancel?: () => void
+  onReturn?: () => void
   onPay?: () => void
   onDelete?: () => void
 }) {
   const toast = useToast()
   const receiptMeta = useReceiptMeta()
   const printOptions = useReceiptPrintOptions()
+  const receiptsQuery = useQuery({ queryKey: ['purchase-receipts', purchase?.id], queryFn: () => fetchPurchaseReceipts(purchase!.id), enabled: Boolean(purchase) })
 
   if (!purchase && !loading) return null
 
@@ -103,8 +118,8 @@ export function PurchaseDetailDrawer({
                 </tr>
               </thead>
               <tbody>
-                {purchase.lines.map(line => (
-                  <tr key={line.productId + line.sku}>
+                {purchase.lines.map((line, index) => (
+                  <tr key={`${line.productId}-${line.sku}-${index}`}>
                     <td>
                       <div className="td-strong">{line.name}</div>
                       <div className="td-sub mono">{line.sku}</div>
@@ -122,14 +137,22 @@ export function PurchaseDetailDrawer({
             <div className="row" style={{ justifyContent: 'space-between' }}>
               <span className="muted">Subtotal</span><span className="tnum">{money2(purchase.subtotal)}</span>
             </div>
-            <div className="row" style={{ justifyContent: 'space-between' }}>
+            {printOptions.showTax === true && <div className="row" style={{ justifyContent: 'space-between' }}>
               <span className="muted">GST</span><span className="tnum">{money2(purchase.gstTotal)}</span>
-            </div>
+            </div>}
             <div className="divider" style={{ margin: '6px 0' }} />
             <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700, fontSize: 17 }}>
               <span>Total</span><span className="tnum">{money2(purchase.grandTotal)}</span>
             </div>
+            {(purchase.status === 'BILLED' || purchase.status === 'PAID') && <>
+              <div className="row" style={{ justifyContent: 'space-between' }}><span className="muted">Paid</span><span className="tnum">{money2(purchase.totalPaid)}</span></div>
+              <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700 }}><span>Balance due</span><span className="tnum">{money2(purchase.balanceDue)}</span></div>
+            </>}
           </div>
+
+          {purchase.payments.length > 0 && <div style={{ marginBottom: 18 }}><div className="menu-label" style={{ padding: '0 0 8px' }}>Payment history</div>{purchase.payments.map(payment => <div key={payment.id} className="row" style={{ justifyContent: 'space-between', padding: '9px 0', borderTop: '1px solid var(--border)' }}><div><div className="td-strong">{payment.method.replace('_', ' ')}</div><div className="td-sub">{new Date(payment.createdAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}{payment.notes ? ` · ${payment.notes}` : ''}</div></div><strong className="tnum">{money2(payment.amount)}</strong></div>)}</div>}
+
+          {(receiptsQuery.data?.length ?? 0) > 0 && <div style={{ marginBottom: 18 }}><div className="menu-label" style={{ padding: '0 0 8px' }}>Delivery history</div>{receiptsQuery.data?.map(receipt => <div key={receipt.id} style={{ padding: '9px 0', borderTop: '1px solid var(--border)' }}><div className="row" style={{ justifyContent: 'space-between' }}><span className="td-strong mono">{receipt.grnNo}</span><span className="td-sub">{new Date(receipt.createdAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</span></div><div className="row" style={{ justifyContent: 'space-between', gap: 8 }}><div className="td-sub">{receipt.items.map(item => `${item.productName} × ${item.quantity}`).join(' · ')}{receipt.notes ? ` · ${receipt.notes}` : ''}</div><Button size="sm" variant="outline" icon="printer" onClick={() => printGrn(receipt)}>Print / PDF</Button></div></div>)}</div>}
 
           <div className="row gap8" style={{ flexWrap: 'wrap', marginBottom: 16 }}>
             <Button variant="primary" icon="printer" onClick={() => {
@@ -155,14 +178,24 @@ export function PurchaseDetailDrawer({
                 Confirm order
               </Button>
             )}
-            {(purchase.status === 'DRAFT' || purchase.status === 'PENDING_GRN') && onReceive && (
+            {purchase.status === 'PENDING_GRN' && onReceive && (
               <Button variant="primary" icon="package-check" disabled={busy} onClick={onReceive}>
                 Receive GRN
               </Button>
             )}
+            {purchase.status === 'PENDING_GRN' && onCancel && (
+              <Button variant="danger-soft" icon="x-circle" disabled={busy} onClick={onCancel}>
+                Cancel order
+              </Button>
+            )}
             {purchase.status === 'BILLED' && onPay && (
               <Button variant="primary" icon="check" disabled={busy} onClick={onPay}>
-                Mark paid
+                Record payment
+              </Button>
+            )}
+            {(purchase.status === 'BILLED' || purchase.status === 'PAID') && onReturn && (
+              <Button variant="outline" icon="rotate-ccw" disabled={busy} onClick={onReturn}>
+                Return items
               </Button>
             )}
             {purchase.status === 'DRAFT' && onDelete && (

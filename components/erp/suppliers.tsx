@@ -1,29 +1,27 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Icon, Button, Card, TextInput, IconTile } from './ui'
+import { Icon, Button, Card, TextInput, IconTile, KpiCard } from './ui'
 import type { Supplier } from '@/lib/purchases-api'
 import { useSuppliersQuery } from '@/lib/queries/use-purchases'
 import { SupplierFormModal } from './supplier-form-modal'
-import { ProcurementImportModal } from './procurement-import-modal'
 
 export function SuppliersPanel({
   canManage = true,
   onInvalidate,
-  onAddSupplier,
-  onImportSuppliers,
+  onSettleSupplier,
+  onPaymentHistory,
 }: {
   canManage?: boolean
   onInvalidate: () => void
-  onAddSupplier?: () => void
-  onImportSuppliers?: () => void
+  onSettleSupplier?: (supplier: Supplier) => void
+  onPaymentHistory?: (supplier: Supplier) => void
 }) {
-  const suppliersQuery = useSuppliersQuery()
+  const [hasSearched, setHasSearched] = useState(false)
+  const suppliersQuery = useSuppliersQuery(hasSearched)
   const suppliers = suppliersQuery.data ?? []
   const [q, setQ] = useState('')
   const [editSupplier, setEditSupplier] = useState<Supplier | null>(null)
-  const [formOpen, setFormOpen] = useState(false)
-  const [importOpen, setImportOpen] = useState(false)
 
   const filtered = useMemo(() => {
     const lq = q.trim().toLowerCase()
@@ -37,19 +35,23 @@ export function SuppliersPanel({
     )
   }, [suppliers, q])
 
-  const openAdd = () => {
-    setEditSupplier(null)
-    if (onAddSupplier) onAddSupplier()
-    else setFormOpen(true)
-  }
+  const supplierContacts = suppliers.filter(s => Boolean(s.contactPerson)).length
+  const supplierPhones = suppliers.filter(s => Boolean(s.phone)).length
+  const supplierEmails = suppliers.filter(s => Boolean(s.email)).length
 
-  const openImport = () => {
-    if (onImportSuppliers) onImportSuppliers()
-    else setImportOpen(true)
+  function runSearch() {
+    if (hasSearched) void suppliersQuery.refetch()
+    else setHasSearched(true)
   }
 
   return (
     <>
+      <div className="kpi-grid procurement-status-grid">
+        <KpiCard label="Total suppliers" value={String(hasSearched ? suppliers.length : 0)} icon="truck" tone="tile-primary" />
+        <KpiCard label="Contact persons" value={String(hasSearched ? supplierContacts : 0)} icon="users" tone="tile-info" />
+        <KpiCard label="Phone available" value={String(hasSearched ? supplierPhones : 0)} icon="phone" tone="tile-success" />
+        <KpiCard label="Email available" value={String(hasSearched ? supplierEmails : 0)} icon="mail" tone="tile-warning" />
+      </div>
       <Card noBody>
         <div className="filter-toolbar">
           <div className="toolbar-field">
@@ -61,13 +63,7 @@ export function SuppliersPanel({
               onChange={setQ}
             />
           </div>
-          <div style={{ flex: 1 }} />
-          {canManage && (
-          <div className="row gap8">
-            <Button size="sm" variant="outline" icon="upload" onClick={openImport}>Import</Button>
-            <Button size="sm" variant="primary" icon="plus" onClick={openAdd}>Add supplier</Button>
-          </div>
-          )}
+          <Button size="sm" variant="primary" icon="search" onClick={runSearch} disabled={suppliersQuery.isFetching}>{suppliersQuery.isFetching ? 'Searching…' : 'Search'}</Button>
         </div>
 
         <div className="tbl-wrap">
@@ -83,7 +79,15 @@ export function SuppliersPanel({
               </tr>
             </thead>
             <tbody>
-              {suppliersQuery.isLoading && suppliers.length === 0 ? (
+              {!hasSearched ? (
+                <tr>
+                  <td colSpan={6} style={{ textAlign: 'center', padding: '48px 0', color: 'var(--fg-subtle)', fontSize: 13 }}>
+                    <Icon name="search" size={18} style={{ marginBottom: 8 }} />
+                    <div style={{ fontWeight: 600, color: 'var(--fg)', marginBottom: 3 }}>Search suppliers</div>
+                    <div>Enter a supplier name, phone, registration number, or email, then click Search to load suppliers.</div>
+                  </td>
+                </tr>
+              ) : suppliersQuery.isLoading || suppliersQuery.isFetching ? (
                 <tr>
                   <td colSpan={6} style={{ textAlign: 'center', padding: '40px 0' }}>
                     <Icon name="loader" size={20} />
@@ -99,7 +103,7 @@ export function SuppliersPanel({
                 <tr>
                   <td colSpan={6} style={{ textAlign: 'center', padding: '40px 0', color: 'var(--fg-subtle)', fontSize: 13 }}>
                     {suppliers.length === 0
-                      ? <>{canManage ? <>No suppliers yet. Click <b>Add supplier</b> or <b>Import</b>.</> : 'No suppliers yet.'}</>
+                      ? <>{canManage ? <>No suppliers yet. Use <b>Add supplier</b> or <b>Import suppliers</b> above.</> : 'No suppliers yet.'}</>
                       : 'No suppliers match your search.'}
                   </td>
                 </tr>
@@ -118,11 +122,7 @@ export function SuppliersPanel({
                     {s.address || '—'}
                   </td>
                   <td>
-                    {canManage && (
-                    <Button size="sm" variant="ghost" icon="pencil" onClick={() => setEditSupplier(s)}>
-                      Edit
-                    </Button>
-                    )}
+                    {canManage && <div className="row gap4">{onSettleSupplier && <Button size="sm" variant="ghost" icon="wallet-cards" onClick={() => onSettleSupplier(s)}>Settle</Button>}{onPaymentHistory && <Button size="sm" variant="ghost" icon="history" onClick={() => onPaymentHistory(s)}>History</Button>}<Button size="sm" variant="ghost" icon="pencil" onClick={() => setEditSupplier(s)}>Edit</Button></div>}
                   </td>
                 </tr>
               ))}
@@ -132,18 +132,10 @@ export function SuppliersPanel({
 
         <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
           <span className="muted" style={{ fontSize: 12.5 }}>
-            {filtered.length} supplier{filtered.length === 1 ? '' : 's'}
-            {q.trim() && suppliers.length !== filtered.length && ` · ${suppliers.length} total`}
+            {hasSearched ? <>{filtered.length} supplier{filtered.length === 1 ? '' : 's'}{q.trim() && suppliers.length !== filtered.length && ` · ${suppliers.length} total`}</> : 'Search to load suppliers'}
           </span>
         </div>
       </Card>
-
-      {canManage && formOpen && (
-        <SupplierFormModal
-          onClose={() => setFormOpen(false)}
-          onSaved={onInvalidate}
-        />
-      )}
 
       {canManage && editSupplier && (
         <SupplierFormModal
@@ -156,13 +148,6 @@ export function SuppliersPanel({
         />
       )}
 
-      {importOpen && (
-        <ProcurementImportModal
-          kind="suppliers"
-          onClose={() => setImportOpen(false)}
-          onComplete={onInvalidate}
-        />
-      )}
     </>
   )
 }

@@ -1,11 +1,11 @@
 @import "tailwindcss";
 
 @theme inline {
-  --font-sans: var(--font-inter);
-  --font-mono: var(--font-jetbrains-mono);
+  --font-sans: var(--mercantile-font-sans);
+  --font-mono: var(--mercantile-font-mono);
 }
 
-.font-brand { font-family: var(--font-brand), Inter, sans-serif; }
+.font-brand { font-family: var(--font-brand); }
 
 /* ============================================================
    Mercantile — Design Foundation
@@ -58,8 +58,11 @@
   --shadow-lg: 0 12px 32px rgba(16, 18, 26, 0.12), 0 4px 8px rgba(16, 18, 26, 0.05);
   --shadow-pop: 0 16px 48px rgba(16, 18, 26, 0.18);
 
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+  --mercantile-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --mercantile-font-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  --font-sans: var(--mercantile-font-sans);
+  --font-mono: var(--mercantile-font-mono);
+  --font-brand: ui-rounded, 'Segoe UI', system-ui, sans-serif;
 
   --sidebar-w: 248px;
   --sidebar-w-collapsed: 64px;
@@ -378,11 +381,12 @@ button { font-family: inherit; }
   border-radius: var(--r-md);
   color: var(--fg-muted); font-size: 13.5px; font-weight: 500;
   text-align: left; white-space: nowrap;
-  transition: color .12s;
+  transition: background-color .18s ease, color .18s ease, transform .16s ease;
   position: relative;
 }
 .sb-nav .ic { width: 18px; height: 18px; flex-shrink: 0; color: currentColor; }
 .sb-nav:hover { background: var(--surface-2); color: var(--fg); }
+.sb-nav:active { transform: scale(.98); }
 .sb-nav.active { background: var(--primary-soft); color: var(--primary-soft-fg); font-weight: 600; }
 .sb-nav .sb-count {
   margin-left: auto; font-size: 11px; font-weight: 600;
@@ -393,9 +397,34 @@ button { font-family: inherit; }
 .sb-nav .sb-txt { overflow: hidden; text-overflow: ellipsis; }
 .sb-nav-group { margin-bottom: 5px; }
 .sb-nav-parent { font-size: 12.5px; font-weight: 600; padding-top: 7px; padding-bottom: 7px; }
-.sb-nav-parent .chev { margin-left: auto; flex-shrink: 0; color: var(--fg-subtle); }
-.sb-subnav { margin-left: 14px; padding-left: 7px; border-left: 1px solid var(--border); }
+.sb-nav-parent .chev { margin-left: auto; flex-shrink: 0; color: var(--fg-subtle); transition: transform .32s ease; }
+.sb-nav-parent.expanded .chev { transform: rotate(180deg); }
+.sb-subnav {
+  max-height: 0; margin-left: 14px; padding-left: 7px;
+  border-left: 1px solid transparent; overflow: hidden; opacity: 0;
+  transform: translateY(-4px); visibility: hidden; pointer-events: none;
+  transition: max-height .38s cubic-bezier(.22, .8, .24, 1), opacity .26s ease, transform .32s ease, border-color .32s ease, visibility 0s linear .38s;
+}
+.sb-subnav.expanded {
+  max-height: 320px; border-left-color: var(--border); opacity: 1;
+  transform: translateY(0); visibility: visible; pointer-events: auto;
+  transition-delay: 0s;
+}
 .sb-subnav .sb-nav { padding-top: 7px; padding-bottom: 7px; font-size: 13px; }
+.sb-subnav.expanded .sb-nav { animation: sidebar-subnav-in .3s ease both; }
+.sb-subnav.expanded .sb-nav:nth-child(2) { animation-delay: .045s; }
+.sb-subnav.expanded .sb-nav:nth-child(3) { animation-delay: .09s; }
+.sb-subnav.expanded .sb-nav:nth-child(4) { animation-delay: .135s; }
+.sb-subnav.expanded .sb-nav:nth-child(5) { animation-delay: .18s; }
+.sb-subnav.expanded .sb-nav:nth-child(6) { animation-delay: .225s; }
+@keyframes sidebar-subnav-in {
+  from { opacity: 0; transform: translateX(-5px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sb-nav, .sb-nav-parent .chev, .sb-subnav { transition: none; }
+  .sb-subnav.expanded .sb-nav { animation: none; }
+}
 .sidebar.collapsed .sb-nav { justify-content: center; padding: 9px; }
 .sidebar.collapsed .sb-nav .sb-txt,
 .sidebar.collapsed .sb-nav .sb-count { display: none; }
@@ -609,6 +638,9 @@ button { font-family: inherit; }
 .kpi .trend.up { color: var(--success-fg); }
 .kpi .trend.down { color: var(--danger-fg); }
 .kpi .kpi-foot .vs { color: var(--fg-subtle); }
+.kpi-action { width: 100%; text-align: left; color: inherit; font: inherit; cursor: pointer; }
+.kpi-action:hover { border-color: color-mix(in srgb, var(--primary) 40%, var(--border)); transform: translateY(-1px); }
+.kpi-action.active { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 14%, transparent); }
 
 .tile-primary { background: var(--primary-soft); color: var(--primary-soft-fg); }
 .tile-success { background: var(--success-soft); color: var(--success-fg); }
@@ -696,6 +728,8 @@ textarea.bare { resize: vertical; min-height: 72px; padding-top: 9px; }
 .select-trigger .val.ph { color: var(--fg-subtle); }
 .select-trigger .chev { width: 15px; height: 15px; color: var(--fg-subtle); margin-left: auto; transition: transform .15s; }
 .select-trigger.open .chev { transform: rotate(180deg); }
+.select-search { padding: 6px; border-bottom: 1px solid var(--border); }
+.select-empty { padding: 14px 12px; color: var(--fg-subtle); font-size: 12.5px; text-align: center; }
 
 .popover {
   background: var(--card); border: 1px solid var(--border);
@@ -1164,6 +1198,31 @@ html.dark .auth-brand {
 .spin { animation: spin 0.7s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* POS keeps its grid shape during loading, avoiding a distracting blank panel. */
+.pos-skeleton-card {
+  min-height: 134px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--card);
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+}
+.pos-skeleton-icon, .pos-skeleton-line {
+  display: block;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--surface-2) 20%, color-mix(in oklab, var(--surface-2) 58%, var(--card)) 40%, var(--surface-2) 60%);
+  background-size: 240% 100%;
+  animation: posSkeleton 1.25s ease-in-out infinite;
+}
+.pos-skeleton-icon { width: 30px; height: 30px; }
+.pos-skeleton-line { height: 10px; }
+.pos-skeleton-line.wide { width: 82%; margin-top: auto; }
+.pos-skeleton-line.short { width: 48%; }
+@keyframes posSkeleton { to { background-position: -140% 0; } }
+@media (prefers-reduced-motion: reduce) { .pos-skeleton-icon, .pos-skeleton-line { animation: none; } }
+
 @media (max-width: 880px) { .auth-brand { display: none; } .auth-main { padding-top: 72px; } }
 
 /* Global search / command palette */
@@ -1608,3 +1667,107 @@ body.nav-open { overflow: hidden; }
   background: var(--primary-soft);
 }
 .import-file-name { font-weight: 600; font-size: 13.5px; word-break: break-all; }
+/* Barcode generator */
+.barcode-workspace { display:grid; grid-template-columns:minmax(360px, 1.1fr) minmax(340px, .9fr); gap:16px; align-items:start; }
+.barcode-config-column { display:flex; flex-direction:column; gap:16px; }
+.barcode-panel-head { display:flex; align-items:center; justify-content:space-between; gap:12px; padding:16px; border-bottom:1px solid var(--border); font-size:13px; }
+.barcode-panel-head-plain { padding:0 0 14px; margin-bottom:14px; }
+.barcode-product-list { max-height:510px; overflow:auto; }
+.barcode-product-row { min-height:58px; display:flex; align-items:center; gap:12px; padding:9px 16px; border-bottom:1px solid var(--border); cursor:pointer; font-size:13px; }
+.barcode-product-row:hover { background:var(--bg-subtle); }
+.barcode-product-row-all { min-height:44px; background:var(--bg-subtle); }
+.barcode-product-row-all > span:last-child { margin-left:auto; color:var(--fg-subtle); }
+.barcode-product-meta { display:flex; min-width:0; flex:1; flex-direction:column; gap:3px; }
+.barcode-product-meta strong, .barcode-product-meta span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.barcode-product-meta span { color:var(--fg-subtle); font-size:11.5px; font-family:var(--font-mono); }
+.barcode-empty { min-height:210px; }
+.barcode-settings-grid { display:grid; grid-template-columns:130px minmax(0,1fr); gap:12px; }
+.barcode-options { display:flex; gap:22px; margin-top:15px; font-size:13px; font-weight:600; }
+.barcode-options label { display:flex; align-items:center; gap:8px; }
+.barcode-preview { min-height:180px; display:flex; align-items:center; justify-content:center; overflow:auto; padding:18px; border:1px dashed var(--border); border-radius:var(--radius-md); background:#f1f3f5; }
+.barcode-preview-empty { display:flex; flex-direction:column; align-items:center; gap:10px; color:var(--fg-subtle); font-size:13px; }
+.barcode-label { --label-width:50mm; --label-height:30mm; box-sizing:border-box; width:var(--label-width); height:var(--label-height); display:flex; flex-direction:column; overflow:hidden; padding:2.2mm 2.5mm 1.5mm; border:1px solid #d5d8dc; border-radius:1.5mm; color:#050505; background:#fff; font-family:Arial,sans-serif; break-inside:avoid; }
+.barcode-product-name { overflow:hidden; margin-bottom:1mm; font-size:9pt; font-weight:700; line-height:1.1; text-align:center; text-overflow:ellipsis; white-space:nowrap; }
+.barcode-svg { display:block; width:100%; min-height:8mm; flex:1; }
+.barcode-value { margin-top:.6mm; font-family:'Courier New',monospace; font-size:7.5pt; letter-spacing:.5pt; line-height:1; text-align:center; }
+.barcode-label-footer { display:flex; justify-content:space-between; gap:2mm; margin-top:.8mm; font-size:7pt; line-height:1; }
+.barcode-label-footer span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.barcode-label-small { padding:1.5mm 1.8mm 1mm; }
+.barcode-label-small .barcode-product-name { font-size:7pt; }
+.barcode-label-small .barcode-value, .barcode-label-small .barcode-label-footer { font-size:6pt; }
+.barcode-label-large .barcode-product-name { font-size:11pt; }
+.barcode-label-large .barcode-value { font-size:9pt; }
+.barcode-label-large .barcode-label-footer { font-size:8pt; }
+.barcode-invalid { display:flex; flex:1; align-items:center; justify-content:center; color:#b42318; font-size:8pt; }
+.barcode-print-sheet { display:none; }
+@media (max-width: 900px) { .barcode-workspace { grid-template-columns:1fr; } }
+@media print {
+  @page { margin:8mm; }
+  body.barcode-print-mode > *:not(.barcode-print-sheet) { display:none !important; }
+  body.barcode-print-mode .barcode-print-sheet { position:static; display:flex; flex-wrap:wrap; align-content:flex-start; gap:2mm; width:100%; background:#fff; }
+  body.barcode-print-mode .barcode-label { border:1px dashed #aaa; border-radius:0; }
+}
+
+/* Procurement ledger — compact transaction workspace */
+.procurement-status-grid { margin-bottom: 18px; }
+.procurement-ledger { overflow: hidden; }
+.procurement-ledger .filter-toolbar {
+  min-height: 62px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.procurement-ledger .tbl thead th {
+  height: 46px;
+  background: var(--surface-2);
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+.procurement-ledger .tbl tbody tr { height: 62px; }
+.procurement-ledger .tbl tbody tr:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+.inventory-status-grid { margin-bottom: 18px; }
+.inventory-ledger { overflow: hidden; }
+.inventory-ledger .filter-toolbar {
+  min-height: 62px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.inventory-ledger .tbl thead th {
+  height: 46px;
+  background: var(--surface-2);
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+.inventory-ledger .tbl tbody tr { height: 62px; }
+.inventory-ledger .tbl tbody tr:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+.transaction-ledger, .transaction-entry { overflow: hidden; }
+.transaction-status-grid { margin-bottom: 18px; }
+.transaction-ledger .filter-toolbar {
+  min-height: 62px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.transaction-ledger .tbl thead th, .transaction-entry .tbl thead th {
+  height: 46px;
+  background: var(--surface-2);
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+}
+.transaction-ledger .tbl tbody tr { height: 62px; }
+.transaction-ledger .tbl tbody tr:hover { background: color-mix(in srgb, var(--primary) 5%, transparent); }
+@media (max-width: 760px) {
+  .procurement-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .inventory-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .transaction-status-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .procurement-ledger .filter-toolbar { align-items: stretch; }
+  .inventory-ledger .filter-toolbar { align-items: stretch; }
+  .transaction-ledger .filter-toolbar { align-items: stretch; }
+}

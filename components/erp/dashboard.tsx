@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Icon, Button, Badge, KpiCard, Card, IconTile, Select, TextInput, ContentLoader,
+  Icon, Button, Badge, KpiCard, Card, IconTile, Select, TextInput, ContentLoader, Modal,
 } from './ui'
 import { money } from '@/lib/erp-data'
 import {
@@ -19,6 +19,7 @@ import { useCustomersQuery } from '@/lib/queries/use-customers'
 import { usePosSearchQuery } from '@/lib/queries/use-pos-search'
 import { useAuth } from '@/lib/auth-context'
 import { canCreateBill, canAccessView, canManagePurchases } from '@/lib/rbac'
+import { DailyBusinessReportModal } from './daily-business-report'
 
 function localIsoDate(d: Date): string {
   const y = d.getFullYear()
@@ -96,11 +97,14 @@ const PERIOD_CHIPS: { value: DashboardPreset; label: string }[] = [
 function DashboardFiltersBar({
   filters,
   onChange,
+  active,
 }: {
   filters: DashboardFilters
   onChange: (next: DashboardFilters) => void
+  active: boolean
 }) {
-  const customersQuery = useCustomersQuery()
+  const [customerLookupOpen, setCustomerLookupOpen] = useState(false)
+  const customersQuery = useCustomersQuery(active && customerLookupOpen)
   const [productQ, setProductQ] = useState('')
   const [productOpen, setProductOpen] = useState(false)
   const productWrap = useRef<HTMLDivElement>(null)
@@ -193,6 +197,7 @@ function DashboardFiltersBar({
           options={customerOptions}
           placeholder="All customers"
           icon="user"
+          onOpenChange={open => { if (open) setCustomerLookupOpen(true) }}
         />
 
         <div className="filter-product-wrap" ref={productWrap}>
@@ -647,20 +652,80 @@ function TopProductsChart({ data, emptyLabel }: { data: DashboardData['topProduc
   )
 }
 
+function CashierPerformance({
+  bills,
+  periodLabel,
+  onViewBills,
+}: {
+  bills: DashboardData['recentBills']
+  periodLabel: string
+  onViewBills?: () => void
+}) {
+  const cashiers = Array.from(bills.reduce((summary, bill) => {
+    const current = summary.get(bill.cashier) ?? { name: bill.cashier, bills: 0, sales: 0 }
+    current.bills += 1
+    current.sales += bill.total
+    summary.set(bill.cashier, current)
+    return summary
+  }, new Map<string, { name: string; bills: number; sales: number }>()).values())
+    .sort((a, b) => b.sales - a.sales)
+
+  const totalSales = cashiers.reduce((sum, cashier) => sum + cashier.sales, 0)
+  const totalBills = cashiers.reduce((sum, cashier) => sum + cashier.bills, 0)
+
+  return (
+    <Card
+      title="Cashier activity"
+      sub={`Recent completed sales · ${periodLabel}`}
+      action={onViewBills ? <Button size="sm" variant="ghost" iconRight="arrow-right" onClick={onViewBills}>View bills</Button> : undefined}
+    >
+      {cashiers.length === 0 ? (
+        <div className="empty" style={{ padding: '32px 12px' }}>
+          <div className="ei"><Icon name="users" size={22} /></div>
+          <div style={{ fontWeight: 600, color: 'var(--fg)' }}>No completed sales yet</div>
+          <div className="muted" style={{ fontSize: 13 }}>Cashier activity appears as bills are completed.</div>
+        </div>
+      ) : (
+        <>
+          <div className="row" style={{ justifyContent: 'space-between', padding: '2px 0 14px', borderBottom: '1px solid var(--border)' }}>
+            <div><div className="td-sub">Completed bills</div><div className="section-title tnum" style={{ fontSize: 23, marginTop: 3 }}>{totalBills}</div></div>
+            <div style={{ textAlign: 'right' }}><div className="td-sub">Sales captured</div><div className="section-title tnum" style={{ fontSize: 23, marginTop: 3 }}>{money(totalSales)}</div></div>
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 0, marginTop: 4 }}>
+            {cashiers.slice(0, 5).map(cashier => (
+              <div key={cashier.name} className="row" style={{ justifyContent: 'space-between', padding: '11px 0', borderBottom: '1px solid var(--border)' }}>
+                <div className="row gap8"><IconTile tone="tile-info" size={28} icon="user-round" /><div><div style={{ fontSize: 13, fontWeight: 650 }}>{cashier.name}</div><div className="td-sub">{cashier.bills} bill{cashier.bills === 1 ? '' : 's'} · avg {money(cashier.sales / cashier.bills)}</div></div></div>
+                <strong className="tnum">{money(cashier.sales)}</strong>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Card>
+  )
+}
+
 export function Dashboard({
   setView,
   onOpenBill,
+  onOpenBills,
+  onOpenCustomerBills,
   active = true,
 }: {
   setView: (v: string) => void
   onOpenBill?: (id: string) => void
+  onOpenBills?: () => void
+  onOpenCustomerBills?: (customerId: string, customerName: string) => void
   active?: boolean
 }) {
   const { user } = useAuth()
   const canBill = canCreateBill(user)
   const canBills = canAccessView(user, 'bills')
   const canPurchases = canManagePurchases(user)
+  const canViewOperationsFinance = ['SUPER_ADMIN', 'TENANT_ADMIN', 'MANAGER', 'ACCOUNTANT'].includes(user?.role ?? '')
   const [filters, setFilters] = useState<DashboardFilters>(DEFAULT_DASHBOARD_FILTERS)
+  const [creditDetailsOpen, setCreditDetailsOpen] = useState(false)
+  const [dailyReportOpen, setDailyReportOpen] = useState(false)
   const debouncedFilters = useDebouncedValue(filters, 300)
   const filtersPending = dashboardFiltersKey(filters) !== dashboardFiltersKey(debouncedFilters)
   const {
@@ -684,7 +749,7 @@ export function Dashboard({
   if (waitingForCustom || (!shellReady && loading)) {
     return (
       <div className="content-pad page-shell">
-        <DashboardFiltersBar filters={filters} onChange={setFilters} />
+        <DashboardFiltersBar filters={filters} onChange={setFilters} active={active} />
         {error ? (
         <div className="empty" style={{ padding: '80px 0' }}>
             <>
@@ -714,7 +779,7 @@ export function Dashboard({
   if (!shellReady && !data) {
     return (
       <div className="content-pad page-shell">
-        <DashboardFiltersBar filters={filters} onChange={setFilters} />
+        <DashboardFiltersBar filters={filters} onChange={setFilters} active={active} />
         <div className="empty" style={{ padding: '80px 0' }}>
           <div className="ei"><Icon name="alert-circle" size={22} /></div>
           <div style={{ fontWeight: 600, color: 'var(--danger-fg)', marginBottom: 8 }}>{error ?? 'Could not load dashboard data'}</div>
@@ -726,6 +791,7 @@ export function Dashboard({
 
   const d = data!
   const lowStock = d.lowStock ?? []
+  const operationalActions = d.operations.actions.filter(action => canViewOperationsFinance || action.type !== 'credit')
   const salesKpiLabel = filters.preset === 'today'
     ? "Today's sales"
     : filters.preset === 'yesterday'
@@ -756,6 +822,7 @@ export function Dashboard({
           <div className="section-sub">{tenant} · {periodLabel}</div>
         </div>
         <div className="row gap8 page-header-actions" style={{ flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <Button size="sm" variant="outline" icon="file-bar-chart" onClick={() => setDailyReportOpen(true)}>Daily report</Button>
           <Button size="sm" icon="refresh-cw" onClick={() => void refetch()} disabled={loading || !customRangeReady}>
             {loading ? 'Updating…' : 'Refresh'}
           </Button>
@@ -763,7 +830,9 @@ export function Dashboard({
         </div>
       </div>
 
-      <DashboardFiltersBar filters={filters} onChange={setFilters} />
+      <DashboardFiltersBar filters={filters} onChange={setFilters} active={active} />
+
+      {dailyReportOpen && <DailyBusinessReportModal onClose={() => setDailyReportOpen(false)} />}
 
       {filters.preset === 'custom' && !customRangeReady && (
         <div className="alert-banner info">
@@ -820,6 +889,11 @@ export function Dashboard({
           trend={d.kpis.billsTrend.value}
           trendDir={d.kpis.billsTrend.dir}
           vs={d.kpis.salesTrend.vs}
+          onClick={() => {
+            if (filters.customerId) onOpenCustomerBills?.(filters.customerId, d.meta.customerName ?? 'Selected customer')
+            else if (onOpenBills) onOpenBills()
+            else setView('bills')
+          }}
         />
         <KpiCard
           label={itemsKpiLabel}
@@ -839,13 +913,28 @@ export function Dashboard({
         />
       </div>
 
-      <div className="stack-below-900">
-        <Card
-          title="Sales trend"
-          sub={`${periodLabel} · ${compareLabel}`}
-        >
-          <SalesTrendChart data={d.salesTrend} />
+      <div style={{ display: 'grid', gridTemplateColumns: canViewOperationsFinance ? 'minmax(0, 1.5fr) minmax(220px, 1fr) minmax(220px, 1fr)' : 'minmax(0, 1fr)', gap: 16 }}>
+        <Card title="Action required" sub="Items that need attention today" noBody>
+          {operationalActions.length === 0 ? <div className="muted" style={{ padding: '24px 20px', fontSize: 13 }}>Everything is on track. There are no urgent actions.</div> : <div>{operationalActions.map(action => (
+            <button key={action.type} type="button" className="menu-item" style={{ width: '100%', padding: '13px 16px', alignItems: 'flex-start' }} onClick={() => setView(action.target)}>
+              <Icon name={action.type === 'low_stock' ? 'triangle-alert' : action.type === 'pending_grn' ? 'truck' : action.type === 'expiry' ? 'calendar-clock' : 'wallet-cards'} size={17} className="lead" style={{ color: action.tone === 'danger' ? 'var(--danger-fg)' : action.tone === 'warning' ? 'var(--warning-fg)' : 'var(--primary)' }} />
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 2, textAlign: 'left' }}><span style={{ fontWeight: 650 }}>{action.title}</span><span className="muted" style={{ fontSize: 12.5 }}>{action.detail}</span></span>
+              <Icon name="chevron-right" size={16} style={{ marginLeft: 'auto', marginTop: 3, color: 'var(--fg-subtle)' }} />
+            </button>
+          ))}</div>}
         </Card>
+        {canViewOperationsFinance && <Card title="Today’s collections" sub="Completed bill payments" noBody>
+          <div style={{ padding: '16px 18px' }}><div className="section-title tnum" style={{ fontSize: 24 }}>{money(d.operations.cash.total)}</div><div className="row" style={{ justifyContent: 'space-between', marginTop: 14, fontSize: 12.5 }}><span className="muted">Cash</span><span className="tnum">{money(d.operations.cash.cash)}</span></div><div className="row" style={{ justifyContent: 'space-between', marginTop: 8, fontSize: 12.5 }}><span className="muted">UPI</span><span className="tnum">{money(d.operations.cash.upi)}</span></div><div className="row" style={{ justifyContent: 'space-between', marginTop: 8, fontSize: 12.5 }}><span className="muted">Card</span><span className="tnum">{money(d.operations.cash.card)}</span></div></div>
+        </Card>}
+        {canViewOperationsFinance && <Card title="Customer credit" sub="Outstanding balance" noBody>
+          <div style={{ padding: '16px 18px' }}><div className="section-title tnum" style={{ fontSize: 24 }}>{money(d.operations.credit.outstanding)}</div><div className="muted" style={{ fontSize: 12.5, marginTop: 8 }}>{d.operations.credit.customers} customer{d.operations.credit.customers === 1 ? '' : 's'} with credit due</div><Button size="sm" variant="outline" icon="users" style={{ marginTop: 16 }} onClick={() => setCreditDetailsOpen(true)}>View customers</Button></div>
+        </Card>}
+      </div>
+
+      {creditDetailsOpen && <Modal title="Customer credit details" sub={`${d.operations.credit.customers} customer${d.operations.credit.customers === 1 ? '' : 's'} · Total due ${money(d.operations.credit.outstanding)}`} icon="wallet-cards" wide onClose={() => setCreditDetailsOpen(false)} footer={<Button variant="outline" onClick={() => setCreditDetailsOpen(false)}>Close</Button>}><div className="tbl-wrap"><table className="tbl"><thead><tr><th>Customer</th><th>Phone</th><th className="num">Outstanding</th></tr></thead><tbody>{d.operations.credit.topCustomers.map(customer => <tr key={customer.id}><td className="td-strong">{customer.name}</td><td className="muted">{customer.phone || '—'}</td><td className="num td-strong tnum">{money(customer.outstanding)}</td></tr>)}</tbody></table></div></Modal>}
+
+      <div className="stack-below-900">
+        <CashierPerformance bills={d.recentBills} periodLabel={periodLabel} onViewBills={canBills ? () => setView('bills') : undefined} />
         <Card title="Top products" sub={`By revenue · ${periodLabel}`}>
           <TopProductsChart data={d.topProducts} emptyLabel="No sales in this period" />
         </Card>

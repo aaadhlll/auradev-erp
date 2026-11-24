@@ -19,6 +19,14 @@ export interface ReceiptPrintOptions {
   showTax?: boolean
   showGstBreakup?: boolean
   showCustomer?: boolean
+  showStorePhone?: boolean
+  showStoreAddress?: boolean
+  showStoreTin?: boolean
+  showBillDate?: boolean
+  showPayment?: boolean
+  showTendered?: boolean
+  showChange?: boolean
+  receiptTitle?: string
   /** Label used for generated documents such as a sales return note. */
   documentLabel?: string
 }
@@ -31,6 +39,14 @@ export const DEFAULT_RECEIPT_PRINT: ReceiptPrintOptions = {
   showTax: false,
   showGstBreakup: true,
   showCustomer: true,
+  showStorePhone: true,
+  showStoreAddress: true,
+  showStoreTin: true,
+  showBillDate: true,
+  showPayment: true,
+  showTendered: true,
+  showChange: true,
+  receiptTitle: 'SALES RECEIPT',
 }
 
 export const DEFAULT_RECEIPT_META: ReceiptMeta = {
@@ -60,6 +76,7 @@ function receiptLines(bill: SavedBill, meta: ReceiptMeta, options: ReceiptPrintO
     ...(options.showTax === true ? [`Tax scheme: ${gstSchemeShortLabel(bill.gstScheme)}`] : []),
   )
   if (options.showCustomer !== false) lines.push(`Customer: ${bill.customerName}`)
+  if (options.showCustomer !== false && bill.customerAddress) lines.push(`Address: ${bill.customerAddress}`)
   if (options.showCashier !== false) lines.push(`Cashier: ${bill.cashierName}`)
   lines.push('--------------------------------')
   const billLevelGst = isBillLevelGstScheme(bill.gstScheme)
@@ -145,26 +162,26 @@ async function renderCanvas(
 ): Promise<HTMLCanvasElement> {
   const widthMm = options.widthMm === 58 ? 58 : 80
   const width = Math.round(widthMm * 4)
-  const lines = receiptLines(bill, meta, options)
-  const lineHeight = widthMm === 58 ? 16 : 18
   const padding = widthMm === 58 ? 12 : 16
+  const bodySize = widthMm === 58 ? 10 : 12
+  const smallSize = widthMm === 58 ? 8 : 10
+  const lineHeight = widthMm === 58 ? 15 : 18
   const showLogo = options.showLogo !== false
   const logoUrl = showLogo ? (meta.logoUrl ?? DEFAULT_RECEIPT_META.logoUrl!) : undefined
 
-  let logoBlock = 0
   let logoImg: HTMLImageElement | null = null
   if (logoUrl) {
-    try {
-      logoImg = await loadImage(logoUrl)
-      const maxLogoWidth = width - padding * 2
-      const scale = Math.min(1, maxLogoWidth / logoImg.width)
-      logoBlock = logoImg.height * scale + 12
-    } catch {
-      logoImg = null
-    }
+    try { logoImg = await loadImage(logoUrl) } catch { logoImg = null }
   }
 
-  const height = padding * 2 + logoBlock + lines.length * lineHeight
+  // Start with a generous canvas and crop after rendering. This keeps receipts
+  // compact for short bills while allowing longer baskets without clipping.
+  // Customer addresses can be several lines long. Reserve enough space before
+  // rendering so the cropped receipt never cuts the address or the rows below.
+  const addressAllowance = bill.customerAddress
+    ? Math.ceil(bill.customerAddress.length / (widthMm === 58 ? 22 : 34)) * lineHeight
+    : 0
+  const height = Math.max(760, 430 + bill.lines.length * (lineHeight * 2 + 8) + addressAllowance)
   const canvas = document.createElement('canvas')
   canvas.width = width
   canvas.height = height
@@ -173,20 +190,111 @@ async function renderCanvas(
   ctx.fillRect(0, 0, width, height)
   ctx.fillStyle = '#111111'
 
-  if (logoImg) {
-    const maxLogoWidth = width - padding * 2
-    const scale = Math.min(1, maxLogoWidth / logoImg.width)
-    const drawWidth = logoImg.width * scale
-    const drawHeight = logoImg.height * scale
-    ctx.drawImage(logoImg, (width - drawWidth) / 2, padding, drawWidth, drawHeight)
+  let y = padding
+  const inner = width - padding * 2
+  const text = (value: string, x: number, align: CanvasTextAlign = 'left', size = bodySize, bold = false) => {
+    ctx.font = `${bold ? '700' : '400'} ${size}px Arial, sans-serif`
+    ctx.textAlign = align
+    ctx.fillText(value, x, y)
+  }
+  const rule = () => { ctx.strokeStyle = '#1f2937'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(padding, y); ctx.lineTo(width - padding, y); ctx.stroke(); y += 10 }
+  const row = (label: string, value: string, bold = false) => { text(label, padding, 'left', bodySize, bold); text(value, width - padding, 'right', bodySize, bold); y += lineHeight }
+  const centre = (value: string, size = bodySize, bold = false) => { text(value, width / 2, 'center', size, bold); y += lineHeight }
+  const truncate = (value: string, maxWidth: number) => {
+    ctx.font = `700 ${bodySize}px Arial, sans-serif`
+    if (ctx.measureText(value).width <= maxWidth) return value
+    let textValue = value
+    while (textValue.length && ctx.measureText(`${textValue}…`).width > maxWidth) textValue = textValue.slice(0, -1)
+    return `${textValue}…`
+  }
+  const wrap = (value: string, maxWidth: number, size = bodySize, bold = false) => {
+    ctx.font = `${bold ? '700' : '400'} ${size}px Arial, sans-serif`
+    const words = value.trim().split(/\s+/).filter(Boolean)
+    const lines: string[] = []
+    let current = ''
+    for (const word of words) {
+      const candidate = current ? `${current} ${word}` : word
+      if (current && ctx.measureText(candidate).width > maxWidth) {
+        lines.push(current)
+        current = word
+      } else {
+        current = candidate
+      }
+    }
+    if (current) lines.push(current)
+    return lines.length ? lines : ['']
+  }
+  const detailBlock = (label: string, value: string) => {
+    text(label, padding, 'left', bodySize)
+    y += lineHeight
+    for (const line of wrap(value, inner - 8, bodySize)) {
+      text(line, padding + 8, 'left', bodySize)
+      y += lineHeight
+    }
   }
 
-  const textTop = padding + logoBlock
-  lines.forEach((line, i) => {
-    ctx.font = i === 0 ? `bold ${widthMm === 58 ? 12 : 14}px sans-serif` : `${widthMm === 58 ? 11 : 13}px monospace`
-    ctx.fillText(line, padding, textTop + (i + 1) * lineHeight - 4)
-  })
-  return canvas
+  if (logoImg) {
+    const scale = Math.min(1, (inner * .55) / logoImg.width, 48 / logoImg.height)
+    const drawWidth = logoImg.width * scale, drawHeight = logoImg.height * scale
+    ctx.drawImage(logoImg, (width - drawWidth) / 2, y, drawWidth, drawHeight)
+    y += drawHeight + 8
+  }
+  centre(meta.storeName ?? DEFAULT_RECEIPT_META.storeName!, widthMm === 58 ? 13 : 16, true)
+  if (options.showStoreAddress !== false && meta.address) centre(meta.address, smallSize)
+  const contact = [
+    options.showStorePhone !== false ? meta.storePhone : null,
+    options.showStoreTin !== false && meta.gstin ? `CR / TIN: ${meta.gstin}` : null,
+  ].filter(Boolean).join('  ·  ')
+  if (contact) centre(contact, smallSize)
+  y += 3; rule()
+  centre(options.documentLabel ?? options.receiptTitle ?? 'SALES RECEIPT', smallSize, true)
+  row('Bill no.', bill.billNo)
+  if (options.showBillDate !== false) row('Date', formatDate(bill.createdAt))
+  if (options.showCustomer !== false) row('Customer', bill.customerName)
+  if (options.showCustomer !== false && bill.customerAddress) detailBlock('Address', bill.customerAddress)
+  if (options.showCashier !== false) row('Cashier', bill.cashierName)
+  y += 2; rule()
+  text('ITEM', padding, 'left', smallSize, true); text('AMOUNT', width - padding, 'right', smallSize, true); y += lineHeight
+  const billLevelGst = isBillLevelGstScheme(bill.gstScheme)
+  for (const line of bill.lines) {
+    text(truncate(line.name, inner - 72), padding, 'left', bodySize, true)
+    text(money2(line.lineTotal), width - padding, 'right', bodySize, true)
+    y += lineHeight
+    const taxNote = options.showTax === true && !billLevelGst ? ` · ${line.gstRate}% tax` : ''
+    text(`${line.quantity} ${line.unitLabel} × ${money2(line.unitPrice)}${taxNote}`, padding, 'left', smallSize)
+    y += lineHeight + 4
+  }
+  rule()
+  row('Subtotal', money2(bill.subtotal))
+  if (bill.billDiscount > 0) row('Discount', `−${money2(bill.billDiscount)}`)
+  if (options.showTax === true && options.showGstBreakup !== false && bill.cgstTotal + bill.sgstTotal > 0) {
+    row('CGST', money2(bill.cgstTotal)); row('SGST', money2(bill.sgstTotal))
+  }
+  rule(); row('TOTAL', money2(bill.grandTotal), true); y += 3
+  const payments = bill.payments?.length
+    ? bill.payments
+    : [{ method: bill.paymentMethod, amount: bill.grandTotal, tendered: bill.tendered, changeDue: bill.changeDue }]
+  if (options.showPayment !== false) {
+    if (payments.length > 1) {
+      row('Payment', 'SPLIT', true)
+      for (const payment of payments) row(`  ${payment.method}`, money2(payment.amount))
+    } else {
+      row('Payment', payments[0].method)
+    }
+  }
+  const totalTendered = payments.reduce((total, payment) => total + (payment.tendered ?? 0), 0)
+  const totalChange = payments.reduce((total, payment) => total + (payment.changeDue ?? 0), 0)
+  if (options.showTendered !== false && totalTendered > 0) row('Tendered', money2(totalTendered))
+  if (options.showChange !== false && totalChange > 0) row('Change due', money2(totalChange))
+  y += 3; rule()
+  centre(meta.billFooter?.trim() || 'Thank you for shopping with us!', smallSize, true)
+  centre('Please visit again', smallSize)
+
+  const cropped = document.createElement('canvas')
+  cropped.width = width
+  cropped.height = Math.ceil(y + padding)
+  cropped.getContext('2d')!.drawImage(canvas, 0, 0)
+  return cropped
 }
 
 function downloadBlob(blob: Blob, filename: string) {

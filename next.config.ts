@@ -12,6 +12,11 @@ const lanOrigins = (process.env.NEXT_DEV_LAN_ORIGIN ?? '')
 const apiProxyUrl = process.env.API_PROXY_URL?.replace(/\/$/, '')
 
 const nextConfig: NextConfig = {
+  // Lets CI or a production verification build run beside `next dev` without
+  // competing for the same generated .next directory.
+  distDir: process.env.NEXT_BUILD_DIR || '.next',
+  // Electron packages the standalone Next server and runs it on localhost.
+  output: 'standalone',
   // Next.js blocks /_next dev assets from LAN hosts unless listed here.
   allowedDevOrigins: lanOrigins,
   // Pin workspace root — avoids picking C:\Users\T480\package-lock.json as monorepo root.

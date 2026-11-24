@@ -59,8 +59,8 @@ export function ModuleHub() {
       <footer className={styles.footer}>
         <span>© 2026, AuraDev. All Rights Reserved.</span>
         <nav aria-label="Legal links">
-          <a href="#contact">Contact AuraDev</a><a href="#privacy">Privacy</a>
-          <a href="#terms">Terms of use</a><a href="#trademarks">Trademarks</a>
+          <a href="https://auradev.in/" target="_blank" rel="noreferrer">Contact AuraDev</a><a href="https://auradev.in/" target="_blank" rel="noreferrer">Privacy</a>
+          <a href="https://auradev.in/" target="_blank" rel="noreferrer">Terms of use</a><a href="https://auradev.in/" target="_blank" rel="noreferrer">Trademarks</a>
         </nav>
       </footer>
       <LoadingOverlay visible={loading} />

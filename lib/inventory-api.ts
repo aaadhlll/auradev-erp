@@ -38,6 +38,9 @@ interface Page<T> {
 
 export interface StockMovement {
   id: string
+  productName: string
+  sku: string
+  referenceId: string | null
   movementType: string
   signedDelta: number
   quantity: number
@@ -134,7 +137,9 @@ function toCreateBody(f: ProductFormData) {
     priceSelling: +f.price,
     costPrice: f.cost ? +f.cost : null,
     taxRatePct: +f.tax,
-    initialStock: +f.stock || 0,
+    // Item Master creates catalogue data only. Stock is introduced through
+    // Opening Stock or a received Purchase/GRN so every quantity has a ledger trail.
+    initialStock: 0,
     lowStockThreshold: +f.reorder || 0,
     reorderQuantity: +f.reorder || 0,
     expiryTracked: f.expiryTracked,
@@ -253,6 +258,24 @@ export async function adjustStock(
   return fetchProduct(id)
 }
 
+export async function recordOpeningStock(lines: Array<{
+  productId: string
+  quantity: number
+  batchNumber?: string
+  expiryDate?: string
+  notes?: string
+}>): Promise<void> {
+  await apiFetch('/api/v1/products/opening-stock', {
+    method: 'POST',
+    body: JSON.stringify(lines.map(line => ({
+      ...line,
+      batchNumber: line.batchNumber?.trim() || null,
+      expiryDate: line.expiryDate || null,
+      notes: line.notes?.trim() || null,
+    }))),
+  })
+}
+
 export interface InventoryBatch {
   id: string
   batchNumber: string
@@ -283,12 +306,16 @@ interface ApiStockMovement {
   quantity: number | string
   notes: string | null
   quantityAfter: number | string
+  referenceId: string | null
   createdAt: string
 }
 
 function mapMovement(m: ApiStockMovement): StockMovement {
   return {
     id: m.id,
+    productName: String((m as ApiStockMovement & { productName?: string }).productName ?? ''),
+    sku: String((m as ApiStockMovement & { sku?: string }).sku ?? ''),
+    referenceId: m.referenceId ?? null,
     movementType: m.movementType,
     signedDelta: Number(m.signedDelta),
     quantity: Number(m.quantity),
@@ -298,8 +325,21 @@ function mapMovement(m: ApiStockMovement): StockMovement {
   }
 }
 
-export async function fetchMovements(productId: string): Promise<StockMovement[]> {
-  const data = await apiFetch<Page<ApiStockMovement>>(`/api/v1/products/${productId}/movements?size=50`)
+export async function fetchMovements(productId: string, size = 1000): Promise<StockMovement[]> {
+  const data = await apiFetch<Page<ApiStockMovement>>(`/api/v1/products/${productId}/movements?size=${size}`)
+  return data.content.map(mapMovement)
+}
+
+export async function fetchOpeningStock(): Promise<StockMovement[]> {
+  const data = await apiFetch<Page<ApiStockMovement>>('/api/v1/products/opening-stock?size=200')
+  return data.content.map(mapMovement)
+}
+
+export async function fetchStockTransactions(types: string[]): Promise<StockMovement[]> {
+  const params = new URLSearchParams()
+  types.forEach(type => params.append('types', type))
+  params.set('size', '200')
+  const data = await apiFetch<Page<ApiStockMovement>>(`/api/v1/products/stock-transactions?${params}`)
   return data.content.map(mapMovement)
 }
 

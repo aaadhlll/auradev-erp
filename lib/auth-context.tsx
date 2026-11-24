@@ -57,6 +57,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(async () => {
     await apiLogout()
     queryClient.clear()
+    // A shop terminal can be shared by several roles. Keep theme preferences,
+    // but discard the previous person's saved workspace/page selections.
+    for (const key of [
+      'mercantile.inventory.section',
+      'mercantile.procurement.section',
+      'mercantile.inventory.sidebar-groups',
+      'mercantile.procurement.sidebar-groups',
+    ]) {
+      window.sessionStorage.removeItem(key)
+    }
     setUser(null)
   }, [])
 

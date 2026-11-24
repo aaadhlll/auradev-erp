@@ -20,6 +20,8 @@ import { effectiveTaxSettings, resolveLineGstRate, cartGstTotal, gstSchemeShortL
 import { canEditSettingsSection } from '@/lib/rbac'
 import { useAuth } from '@/lib/auth-context'
 import { canHoldBill } from '@/lib/rbac'
+import { openCashierShift, closeCashierShift } from '@/lib/cashier-shift-api'
+import { useCurrentCashierShiftQuery, useSetCurrentCashierShift } from '@/lib/queries/use-cashier-shift'
 import { useInvalidateCatalog } from '@/lib/queries/use-catalog'
 import { useCustomersQuery, useInvalidateCustomers } from '@/lib/queries/use-customers'
 import { useInvalidateDashboard } from '@/lib/queries/use-dashboard'
@@ -308,8 +310,14 @@ function ReceiptModal({ bill, meta, printOptions, onClose }: {
         <div className="row" style={{ justifyContent: 'space-between', fontWeight: 700, marginTop: 8 }}>
           <span>Total paid</span><span className="tnum">{money2(bill.grandTotal)}</span>
         </div>
+        {bill.payments.length > 1 && <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <div className="td-sub" style={{ fontWeight: 700, marginBottom: 5 }}>SPLIT PAYMENT</div>
+          {bill.payments.map((payment, index) => <div key={`${payment.method}-${index}`} className="row" style={{ justifyContent: 'space-between' }}>
+            <span className="muted">{payment.method}</span><span className="tnum">{money2(payment.amount)}</span>
+          </div>)}
+        </div>}
         <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
-          Stock has been updated. Receipt PNG/PDF downloads to your device — no printer required.
+          Stock has been updated. Download or print a receipt when the customer needs one.
         </div>
       </div>
     </Modal>
@@ -332,7 +340,7 @@ function ParkedBillsModal({
   busyId: string | null
 }) {
   return (
-    <Modal title="Parked bills" sub="Resume a parked sale or discard it" icon="pause" onClose={onClose} wide
+    <Modal title="Parked bills" sub={bills.length ? `${bills.length} parked sale${bills.length === 1 ? '' : 's'} · resume the correct cart or discard it` : 'Resume a parked sale or discard it'} icon="pause" onClose={onClose} wide
       footer={<Button variant="ghost" onClick={onClose}>Close</Button>}
     >
       {loading ? (
@@ -352,7 +360,7 @@ function ParkedBillsModal({
             <div className="parked-row" key={b.id}>
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 600, fontSize: 13 }}>{b.customerName}</div>
-                <div className="td-sub mono">{b.billNo} · {b.itemCount} item{b.itemCount === 1 ? '' : 's'}</div>
+                <div className="td-sub mono">{b.billNo} · {b.itemCount} item{b.itemCount === 1 ? '' : 's'} · {new Date(b.updatedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</div>
               </div>
               <div className="tnum" style={{ fontWeight: 700, fontSize: 14 }}>{money2(b.grandTotal)}</div>
               <div className="row gap6">
@@ -396,11 +404,11 @@ export function POS({
 } = {}) {
   const toast = useToast()
   const { user } = useAuth()
-  const receiptMeta = useReceiptMeta()
-  const printerQuery = usePrinterSettingsQuery()
-  const billingQuery = useBillingSettingsQuery()
-  const taxQuery = useTaxSettingsQuery()
-  const printOptions = useReceiptPrintOptions()
+  const receiptMeta = useReceiptMeta(active)
+  const printerQuery = usePrinterSettingsQuery(active)
+  const billingQuery = useBillingSettingsQuery(active)
+  const taxQuery = useTaxSettingsQuery(active)
+  const printOptions = useReceiptPrintOptions(active)
   const billing = billingQuery.data
   const taxSettings = taxQuery.data
   const taxEnabled = billing?.taxEnabled === true
@@ -425,9 +433,9 @@ export function POS({
   const invalidatePos = useInvalidatePos()
   const invalidateHeldBills = useInvalidateHeldBills()
   const invalidateCustomers = useInvalidateCustomers()
-  const customersQuery = useCustomersQuery()
-  const quickPicksQuery = usePosQuickPicksQuery()
-  const heldBillsQuery = useHeldBillsQuery()
+  const customersQuery = useCustomersQuery(active)
+  const quickPicksQuery = usePosQuickPicksQuery(active)
+  const heldBillsQuery = useHeldBillsQuery(active)
   const customers = customersQuery.data ?? []
   const heldBills = heldBillsQuery.data ?? []
   const [cart, setCart] = useState<CartItem[]>([])
@@ -455,7 +463,25 @@ export function POS({
   const [clearCartOpen, setClearCartOpen] = useState(false)
   const [customerAddOpen, setCustomerAddOpen] = useState(false)
   const [creditPaymentOpen, setCreditPaymentOpen] = useState(false)
+  const shiftQuery = useCurrentCashierShiftQuery(active)
+  const setCurrentShift = useSetCurrentCashierShift()
+  const shift = shiftQuery.data ?? null
+  const [openShiftOpen, setOpenShiftOpen] = useState(false)
+  const [shiftCash, setShiftCash] = useState('')
+  const [shiftNote, setShiftNote] = useState('')
+  const [shiftBusy, setShiftBusy] = useState(false)
+  const [closeShiftOpen, setCloseShiftOpen] = useState(false)
   const addPendingRef = useRef(new Set<string>())
+
+  async function openShift() { const amount=Number(shiftCash); if (!Number.isFinite(amount)||amount<0) return; setShiftBusy(true); try { setCurrentShift(await openCashierShift(amount)); setShiftCash(''); setOpenShiftOpen(false); toast('Cashier shift opened', { icon:'circle-play' }) } catch(e) { toast(e instanceof Error?e.message:'Could not open shift',{icon:'alert-circle'}) } finally { setShiftBusy(false) } }
+  async function closeShift() { const amount=Number(shiftCash); if (!Number.isFinite(amount)||amount<0) return; setShiftBusy(true); try { await closeCashierShift(amount,shiftNote); setCurrentShift(null); setCloseShiftOpen(false); setShiftCash(''); setShiftNote(''); toast('Cashier shift closed', { icon:'circle-check' }) } catch(e) { toast(e instanceof Error?e.message:'Could not close shift',{icon:'alert-circle'}) } finally { setShiftBusy(false) } }
+  async function reviewShiftBeforeClose() {
+    setShiftCash('')
+    setShiftNote('')
+    setCloseShiftOpen(true)
+    try { await shiftQuery.refetch() }
+    catch { toast('Could not refresh shift totals', { icon: 'alert-circle' }) }
+  }
 
   const searchQuery = usePosSearchQuery(debouncedQ)
   const isSearching = debouncedQ.length >= 2
@@ -524,6 +550,7 @@ export function POS({
     void customersQuery.refetch()
     void quickPicksQuery.refetch()
     if (isSearching) void searchQuery.refetch()
+    void shiftQuery.refetch()
   }
 
   useEffect(() => {
@@ -691,6 +718,11 @@ export function POS({
 
   async function completeSale(method: string, tendered: number, splitCash: number) {
     if (!customerId || !cart.length) return
+    if (!shift || shift.status !== 'OPEN') {
+      setPayOpen(false)
+      toast(shift?.status === 'OVERDUE' ? 'Your cashier shift is overdue. Close it before billing.' : 'Please open a shift before billing.', { icon: 'alert-circle' })
+      return
+    }
     setPayBusy(true)
     try {
       const payMethod = (method === 'Split' ? 'CASH' : method.toUpperCase()) as 'CASH' | 'UPI' | 'CARD' | 'CREDIT'
@@ -724,7 +756,7 @@ export function POS({
         }, 30_000)
         if (printerQuery.data?.autoPrint) {
           void printReceipt(bill, receiptMeta, printOptions)
-        } else {
+        } else if (printerQuery.data?.autoDownloadReceipt) {
           void saveReceiptPng(bill, receiptMeta, printOptions)
         }
       })
@@ -738,8 +770,9 @@ export function POS({
 
   async function holdBill() {
     if (!customerId || !cart.length || holdBusy) return
-    const existingHeldId =
-      heldBillId ?? heldBills.find(b => b.customerId === customerId)?.id
+    // Only update the held cart that the cashier explicitly resumed. A new cart
+    // for the same customer must remain a separate parked bill.
+    const existingHeldId = heldBillId ?? undefined
     setHoldBusy(true)
     try {
       const held = await holdBillApi({
@@ -812,14 +845,25 @@ export function POS({
     focusScanner()
   }
 
+  function startPayment() {
+    if (!shift || shift.status !== 'OPEN') {
+      toast(shift?.status === 'OVERDUE' ? 'Your cashier shift is overdue. Close it before billing.' : 'Please open a shift before billing.', { icon: 'alert-circle' })
+      return
+    }
+    releaseScanner()
+    setPayOpen(true)
+  }
+
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
-      if (e.key === 'F8' && cart.length) { e.preventDefault(); setPayOpen(true) }
+      if (e.key === 'F8' && cart.length) { e.preventDefault(); startPayment() }
       if (e.key === 'F2' && cart.length) { e.preventDefault(); setClearCartOpen(true) }
+      if (e.key === 'F4' && cart.length && allowHold && !holdBusy) { e.preventDefault(); void holdBill() }
+      if (e.key === 'F6' && allowHold) { e.preventDefault(); setParkedOpen(true) }
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [cart.length])
+  }, [cart.length, shift, allowHold, holdBusy])
 
   const dense = layout === 'wide'
   const cartFirst = layout === 'cartLeft' && !isMobilePos
@@ -828,6 +872,10 @@ export function POS({
   const displayProducts = isSearching ? searchResults : quickPicks
   const panelLoading = isSearching ? searchQuery.isFetching : picksLoading || customersLoading
   const panelError = isSearching ? searchQuery.error?.message : picksError ?? customersError
+  const expectedDrawerCash = shift?.expectedCash ?? shift?.openingCash ?? 0
+  const cashCollection = Math.max(0, expectedDrawerCash - (shift?.openingCash ?? 0))
+  const countedCash = Number(shiftCash)
+  const closingVariance = shiftCash !== '' && Number.isFinite(countedCash) ? countedCash - expectedDrawerCash : null
 
   const cartPanel = (
     <div
@@ -858,6 +906,21 @@ export function POS({
             title="Add customer"
             onClick={() => { releaseScanner(); setCustomerAddOpen(true) }}
           />
+        </div>
+        <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
+          <span className="td-sub">Cashier shift</span>
+          <Button
+            variant={shift ? 'outline' : 'primary'}
+            size="sm"
+            icon={shift ? 'circle-dot' : 'wallet'}
+            onClick={() => {
+              releaseScanner()
+              if (shift) void reviewShiftBeforeClose()
+              else setOpenShiftOpen(true)
+            }}
+          >
+            {shift?.status === 'OVERDUE' ? 'Shift overdue' : shift ? 'Shift open' : 'Open shift'}
+          </Button>
         </div>
         {customer && customer.type !== 'walkin' && customer.creditBalance > 0 && hasPermission(user, 'CUSTOMER_CREDIT_SETTLE') && (
           <div className="row" style={{ justifyContent: 'space-between', marginTop: 8 }}>
@@ -968,7 +1031,7 @@ export function POS({
           )}
           <Button variant="outline" size="sm" icon="trash-2" onClick={() => setClearCartOpen(true)}>Clear</Button>
         </div>
-        <Button variant="primary" className="block pos-pay-btn" icon="wallet" disabled={!cart.length} onClick={() => { releaseScanner(); setPayOpen(true) }}>
+        <Button variant="primary" className="block pos-pay-btn" icon="wallet" disabled={!cart.length} onClick={startPayment}>
           Pay {money(grand)}{!isMobilePos && <span className="kbd" style={{ marginLeft: 4 }}>F8</span>}
         </Button>
       </div>
@@ -1096,10 +1159,13 @@ export function POS({
 
       <div className="prod-grid" style={{ gridTemplateColumns: `repeat(auto-fill, minmax(${dense ? 132 : 158}px, 1fr))` }}>
         {panelLoading && displayProducts.length === 0 ? (
-          <div className="empty" style={{ gridColumn: '1/-1' }}>
-            <Icon name="loader" size={22} />
-            <div style={{ fontWeight: 600, color: 'var(--fg)', marginTop: 8 }}>Loading…</div>
-          </div>
+          Array.from({ length: dense ? 12 : 10 }, (_, index) => (
+            <div className="pos-skeleton-card" key={index} aria-hidden="true">
+              <span className="pos-skeleton-icon" />
+              <span className="pos-skeleton-line wide" />
+              <span className="pos-skeleton-line short" />
+            </div>
+          ))
         ) : panelError ? (
           <div className="empty" style={{ gridColumn: '1/-1' }}>
             <div className="ei"><Icon name="alert-circle" size={22} /></div>
@@ -1130,6 +1196,48 @@ export function POS({
 
   return (
     <div className={'pos-root' + (isMobilePos ? ' pos-mobile' : '')}>
+      {openShiftOpen && !shift && <Modal title="Open cashier shift" sub="Enter the cash float currently in your drawer before creating bills." icon="wallet" onClose={() => setOpenShiftOpen(false)} footer={<><Button variant="outline" onClick={() => setOpenShiftOpen(false)}>Cancel</Button><Button variant="primary" disabled={shiftBusy || shiftCash === ''} onClick={() => void openShift()}>{shiftBusy ? 'Opening…' : 'Open shift'}</Button></>}><Field label="Opening cash"><TextInput type="number" value={shiftCash} onChange={setShiftCash} placeholder="0.00" /></Field></Modal>}
+      {closeShiftOpen && shift && (
+        <Modal
+          title="Close cashier shift"
+          sub="Review today’s collections, then enter the physical cash in the drawer."
+          icon="circle-stop"
+          onClose={() => setCloseShiftOpen(false)}
+          footer={<><Button variant="outline" onClick={() => setCloseShiftOpen(false)}>Cancel</Button><Button variant="primary" disabled={shiftBusy || shiftCash === ''} onClick={() => void closeShift()}>{shiftBusy ? 'Closing…' : 'Close shift'}</Button></>}
+        >
+          <div className="form-grid" style={{ marginBottom: 14 }}>
+            <Field label="Cashier"><div className="input filled">{user?.name ?? 'Cashier'}</div></Field>
+            <Field label="Shift opened"><div className="input filled">{new Date(shift.openedAt).toLocaleString()}</div></Field>
+          </div>
+          <div style={{ border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', marginBottom: 14 }}>
+            <div className="row" style={{ padding: '10px 12px', background: 'var(--surface-2)', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 700, color: 'var(--muted)' }}>
+              <span style={{ flex: 1 }}>PAYMENT METHOD</span><span>COLLECTION</span>
+            </div>
+            {[
+              ['Opening cash float', shift.openingCash],
+              ['Cash sales', cashCollection],
+              ['Card sales', shift.expectedCard ?? 0],
+              ['UPI / wallet sales', shift.expectedUpi ?? 0],
+              ['Credit sales', shift.expectedCredit ?? 0],
+            ].map(([label, amount], index) => (
+              <div className="row" key={String(label)} style={{ padding: '10px 12px', borderBottom: index === 4 ? 'none' : '1px solid var(--border)', justifyContent: 'space-between' }}>
+                <span>{label}</span><strong className="tnum">{money2(Number(amount))}</strong>
+              </div>
+            ))}
+          </div>
+          <div className="row" style={{ justifyContent: 'space-between', padding: '10px 12px', marginBottom: 14, background: 'var(--surface-2)', borderRadius: 8 }}>
+            <span style={{ fontWeight: 700 }}>Expected cash in drawer</span><strong className="tnum">{money2(expectedDrawerCash)}</strong>
+          </div>
+          <div className="form-grid">
+            <Field label="Counted cash" required><TextInput type="number" value={shiftCash} onChange={setShiftCash} placeholder="0.00" /></Field>
+            <Field label="Closing note"><TextInput value={shiftNote} onChange={setShiftNote} placeholder="Optional reason for any difference" /></Field>
+          </div>
+          {closingVariance !== null && <div className="row" style={{ justifyContent: 'space-between', padding: '10px 12px', marginTop: 14, background: 'var(--surface-2)', borderRadius: 8 }}>
+            <span style={{ fontWeight: 700 }}>Cash variance</span>
+            <strong className="tnum" style={{ color: closingVariance < 0 ? 'var(--danger-fg)' : closingVariance > 0 ? 'var(--success-fg)' : undefined }}>{closingVariance === 0 ? money2(0) : `${closingVariance > 0 ? '+' : '−'}${money2(Math.abs(closingVariance))}`}</strong>
+          </div>}
+        </Modal>
+      )}
       {isMobilePos && (
         <div className="pos-mobile-tabs">
           <Tabs
@@ -1152,7 +1260,7 @@ export function POS({
           </div>
           <div className="row gap8">
             <Button size="sm" variant="outline" onClick={() => setMobilePane('cart')}>Cart</Button>
-            <Button size="sm" variant="primary" icon="wallet" disabled={!cart.length} onClick={() => { releaseScanner(); setPayOpen(true) }}>
+            <Button size="sm" variant="primary" icon="wallet" disabled={!cart.length} onClick={startPayment}>
               Pay
             </Button>
           </div>

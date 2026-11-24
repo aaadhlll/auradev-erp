@@ -107,8 +107,9 @@ function formatBillDate(iso: string): string {
 
 function paymentLabel(bill: SavedBill): string {
   if (bill.paymentStatus === 'CREDIT') return 'Credit'
+  if (bill.payments.length > 1) return 'Split payment'
   const m = bill.paymentMethod?.toLowerCase() ?? 'cash'
-  return m.charAt(0).toUpperCase() + m.slice(1)
+  return m.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())
 }
 
 function paymentTone(bill: SavedBill): string {
@@ -122,6 +123,7 @@ function returnReceiptBill(value: SalesReturn, original: SavedBill): SavedBill {
     billNo: value.returnNo,
     customerId: original.customerId,
     customerName: original.customerName,
+    customerAddress: original.customerAddress,
     cashierName: original.cashierName,
     status: 'COMPLETED',
     discountMode: 'AMOUNT',
@@ -135,6 +137,7 @@ function returnReceiptBill(value: SalesReturn, original: SavedBill): SavedBill {
     paymentMethod: value.refundMethod,
     tendered: null,
     changeDue: null,
+    payments: [],
     createdAt: value.createdAt,
     updatedAt: value.createdAt,
     gstSlabs: [],
@@ -243,7 +246,7 @@ export function BillDetailDrawer({
                 {bill.lines.map(line => {
                   const returned = Math.max(line.returnedQuantity, returnedByItem[line.billItemId] ?? 0)
                   const net = Math.max(0, line.quantity - returned)
-                  return <tr key={line.productId + line.sku}>
+                  return <tr key={line.billItemId}>
                     <td>
                       <div className="td-strong">{line.name}</div>
                       <div className="td-sub mono">{line.sku}</div>
@@ -294,6 +297,13 @@ export function BillDetailDrawer({
               <span>Total</span>
               <span className="tnum">{money2(bill.grandTotal)}</span>
             </div>
+            {bill.payments.length > 1 && <>
+              <div className="divider" style={{ margin: '6px 0' }} />
+              <div className="muted" style={{ fontSize: 12, fontWeight: 600 }}>SPLIT PAYMENT</div>
+              {bill.payments.map((payment, index) => <div key={`${payment.method}-${index}`} className="row" style={{ justifyContent: 'space-between' }}>
+                <span className="muted">{payment.method}</span><span className="tnum">{money2(payment.amount)}</span>
+              </div>)}
+            </>}
             {bill.tendered != null && (
               <div className="row" style={{ justifyContent: 'space-between' }}>
                 <span className="muted">Tendered</span>

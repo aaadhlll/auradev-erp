@@ -6,7 +6,9 @@ export const queryClient = new QueryClient({
       staleTime: 60_000,
       gcTime: 30 * 60_000,
       retry: 1,
-      refetchOnWindowFocus: true,
+      // Screens explicitly opt in when a live refresh is useful. Refetching
+      // every cached query whenever the window gains focus feels laggy.
+      refetchOnWindowFocus: false,
     },
   },
 })

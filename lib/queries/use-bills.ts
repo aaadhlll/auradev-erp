@@ -1,11 +1,12 @@
 import { useQuery } from '@tanstack/react-query'
 import { fetchBill, fetchBills, fetchSalesReturnsReport } from '@/lib/billing-api'
 
-export function useBillsQuery(q: string, page: number) {
+export function useBillsQuery(q: string, page: number, customerId = '', enabled = true, dateFrom = '', dateTo = '') {
   return useQuery({
-    queryKey: ['bills', q, page],
-    queryFn: () => fetchBills(q, page),
+    queryKey: ['bills', q, page, customerId, dateFrom, dateTo],
+    queryFn: () => fetchBills(q, page, 25, customerId, dateFrom, dateTo),
     placeholderData: prev => prev,
+    enabled,
   })
 }
 

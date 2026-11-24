@@ -183,6 +183,7 @@ function MItem({ it, value, onChange, setOpen }: {
 }) {
   return (
     <button
+      type="button"
       className={'menu-item' + (it.value === value ? ' active' : '') + (it.danger ? ' danger' : '')}
       onClick={() => { onChange?.(it.value); setOpen(false) }}
     >
@@ -200,13 +201,15 @@ function MItem({ it, value, onChange, setOpen }: {
 
 export function Select({
   value, onChange, options, placeholder = 'Select…', size: sz, icon,
-  width, align = 'left', disabled = false,
+  width, align = 'left', disabled = false, searchable = true, searchPlaceholder = 'Search options…', onOpenChange,
 }: {
   value: string; onChange?: (v: string) => void; options: (SelectOption | SelectGroup)[];
   placeholder?: string; size?: string; icon?: string; width?: number | string;
-  align?: 'left' | 'right'; disabled?: boolean
+  align?: 'left' | 'right'; disabled?: boolean; searchable?: boolean | 'auto'; searchPlaceholder?: string;
+  onOpenChange?: (open: boolean) => void
 }) {
   const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
   const wrap = useRef<HTMLDivElement>(null)
   useClickOutside(wrap, () => setOpen(false), open)
 
@@ -216,12 +219,30 @@ export function Select({
     else flat.push(o)
   })
   const sel = flat.find(o => o.value === value)
+  const showSearch = searchable === true || (searchable === 'auto' && flat.length > 8)
+  const normalizedQuery = query.trim().toLowerCase()
+  const visibleOptions = normalizedQuery
+    ? options.map(option => {
+        if ('items' in option) {
+          return { ...option, items: option.items.filter(item => `${item.label} ${item.sub ?? ''}`.toLowerCase().includes(normalizedQuery)) }
+        }
+        return `${option.label} ${option.sub ?? ''}`.toLowerCase().includes(normalizedQuery) ? option : null
+      }).filter((option): option is SelectOption | SelectGroup => {
+        if (option === null) return false
+        return !('items' in option) || option.items.length > 0
+      })
+    : options
+  const visibleCount = visibleOptions.reduce((count, option) => count + ('items' in option ? option.items.length : 1), 0)
+
+  useEffect(() => {
+    if (!open) setQuery('')
+  }, [open])
 
   return (
     <div ref={wrap} style={{ position: 'relative', width: width ?? '100%', opacity: disabled ? 0.6 : 1, pointerEvents: disabled ? 'none' : undefined }}>
       <div
         className={'select-trigger' + (sz === 'sm' ? ' sm' : '') + (open ? ' open' : '')}
-        onClick={() => !disabled && setOpen(v => !v)}
+        onClick={() => !disabled && setOpen(v => { const next = !v; onOpenChange?.(next); return next })}
         tabIndex={disabled ? -1 : 0}
         aria-disabled={disabled}
       >
@@ -231,7 +252,14 @@ export function Select({
       </div>
       {open && (
         <div className="popover" style={{ position: 'absolute', top: 'calc(100% + 5px)', [align]: 0, minWidth: '100%' }}>
-          {options.map((o, i) =>
+          {showSearch && (
+            <div className="select-search">
+              <TextInput value={query} onChange={setQuery} placeholder={searchPlaceholder} icon="search" size="sm" autoFocus />
+            </div>
+          )}
+          {visibleCount === 0 ? (
+            <div className="select-empty">No matching options</div>
+          ) : visibleOptions.map((o, i) =>
             'items' in o ? (
               <div key={i}>
                 <div className="menu-label">{o.label}</div>
@@ -405,26 +433,30 @@ export function IconTile({
 // ---- KpiCard -------------------------------------------------------------
 
 export function KpiCard({
-  label, value, icon, tone = 'tile-primary', trend, trendDir, vs,
+  label, value, icon, tone = 'tile-primary', trend, trendDir, vs, onClick, active = false,
 }: {
   label: string; value: string | number; icon: string; tone?: string;
-  trend?: string; trendDir?: 'up' | 'down'; vs?: string
+  trend?: string; trendDir?: 'up' | 'down'; vs?: string; onClick?: () => void; active?: boolean
 }) {
+  const content = <>
+    <div className="kpi-top">
+      <IconTile tone={tone} size={32} icon={icon} iconSize={17} />
+      <div className="kpi-label">{label}</div>
+    </div>
+    <div className="kpi-val tnum">{value}</div>
+    <div className="kpi-foot">
+      {trend != null && (
+        <span className={'trend ' + (trendDir ?? 'up')}>
+          <Icon name={trendDir === 'down' ? 'trending-down' : 'trending-up'} size={13} />{trend}
+        </span>
+      )}
+      {vs && <span className="vs">{vs}</span>}
+    </div>
+  </>
+  if (onClick) return <button type="button" className={'kpi kpi-action' + (active ? ' active' : '')} onClick={onClick} aria-pressed={active}>{content}</button>
   return (
     <div className="kpi">
-      <div className="kpi-top">
-        <IconTile tone={tone} size={32} icon={icon} iconSize={17} />
-        <div className="kpi-label">{label}</div>
-      </div>
-      <div className="kpi-val tnum">{value}</div>
-      <div className="kpi-foot">
-        {trend != null && (
-          <span className={'trend ' + (trendDir ?? 'up')}>
-            <Icon name={trendDir === 'down' ? 'trending-down' : 'trending-up'} size={13} />{trend}
-          </span>
-        )}
-        {vs && <span className="vs">{vs}</span>}
-      </div>
+      {content}
     </div>
   )
 }

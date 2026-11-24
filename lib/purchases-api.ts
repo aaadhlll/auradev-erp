@@ -1,6 +1,6 @@
 import { apiFetch } from './api'
 
-export type PurchaseStatus = 'DRAFT' | 'PENDING_GRN' | 'BILLED' | 'PAID'
+export type PurchaseStatus = 'DRAFT' | 'PENDING_GRN' | 'CANCELLED' | 'BILLED' | 'PAID'
 
 export interface Supplier {
   id: string
@@ -13,6 +13,7 @@ export interface Supplier {
 }
 
 export interface PurchaseLine {
+  purchaseItemId: string
   productId: string
   name: string
   sku: string
@@ -23,6 +24,8 @@ export interface PurchaseLine {
   amount: number
   gstAmount: number
   lineTotal: number
+  receivedQuantity: number
+  expiryTracked: boolean
 }
 
 export interface PurchaseSummary {
@@ -50,10 +53,34 @@ export interface PurchaseDetail {
   subtotal: number
   gstTotal: number
   grandTotal: number
+  totalPaid: number
+  balanceDue: number
   notes: string | null
   createdAt: string
   updatedAt: string
+  payments: PurchasePayment[]
   lines: PurchaseLine[]
+}
+
+export interface PurchasePayment {
+  id: string
+  method: 'CASH' | 'UPI' | 'CARD'
+  amount: number
+  notes: string | null
+  createdAt: string
+}
+
+export interface SupplierOutstanding {
+  supplierId: string
+  supplierName: string
+  totalDue: number
+  bills: { id: string; purchaseNo: string; grandTotal: number; paid: number; balanceDue: number; billDate: string }[]
+}
+
+export interface SupplierPaymentHistory {
+  supplierId: string
+  supplierName: string
+  settlements: { reference: string; method: string; amount: number; notes: string | null; createdAt: string; allocations: { purchaseId: string; purchaseNo: string; amount: number }[] }[]
 }
 
 export interface PagedPurchases {
@@ -64,12 +91,41 @@ export interface PagedPurchases {
   totalPages: number
 }
 
+export interface PurchaseKpis {
+  totalValue: number
+  awaitingValue: number
+  awaitingCount: number
+  paidValue: number
+  totalOrders: number
+  draftCount: number
+  pendingCount: number
+  completedCount: number
+  cancelledCount: number
+}
+
 export interface CreatePurchasePayload {
   supplierId: string
   billDate: string
   dueDate?: string
   notes?: string
   items: { productId: string; quantity: number; rate: number; gstRatePct?: number }[]
+}
+
+export interface PurchaseReturn {
+  id: string
+  returnNo: string
+  purchaseId: string
+  purchaseNo: string
+  supplierName: string
+  reason: string
+  resolution: 'SUPPLIER_CREDIT' | 'CASH_REFUND' | 'BANK_REFUND'
+  returnTotal: number
+  createdAt: string
+  items: { purchaseItemId: string; productId: string; productName: string; sku: string; quantity: number; returnAmount: number }[]
+}
+export interface PurchaseReceipt {
+  id: string; grnNo: string; purchaseNo: string | null; supplierName: string | null; receivedBy: string | null; notes: string | null; createdAt: string
+  items: { purchaseItemId: string; productName: string; sku: string; unitLabel: string | null; orderedQuantity: number | null; quantity: number; batchNumber: string | null; expiryDate: string | null }[]
 }
 
 function mapSummary(p: Record<string, unknown>): PurchaseSummary {
@@ -88,6 +144,7 @@ function mapSummary(p: Record<string, unknown>): PurchaseSummary {
 
 function mapDetail(p: Record<string, unknown>): PurchaseDetail {
   const lines = (p.lines as Record<string, unknown>[] ?? []).map(l => ({
+    purchaseItemId: String(l.purchaseItemId),
     productId: String(l.productId),
     name: String(l.name),
     sku: String(l.sku),
@@ -98,6 +155,12 @@ function mapDetail(p: Record<string, unknown>): PurchaseDetail {
     amount: Number(l.amount),
     gstAmount: Number(l.gstAmount),
     lineTotal: Number(l.lineTotal),
+    receivedQuantity: Number(l.receivedQuantity ?? 0),
+    expiryTracked: Boolean(l.expiryTracked),
+  }))
+  const payments = ((p.payments as Record<string, unknown>[]) ?? []).map(payment => ({
+    id: String(payment.id), method: String(payment.method) as PurchasePayment['method'], amount: Number(payment.amount),
+    notes: payment.notes != null ? String(payment.notes) : null, createdAt: String(payment.createdAt),
   }))
   return {
     id: String(p.id),
@@ -112,9 +175,12 @@ function mapDetail(p: Record<string, unknown>): PurchaseDetail {
     subtotal: Number(p.subtotal),
     gstTotal: Number(p.gstTotal),
     grandTotal: Number(p.grandTotal),
+    totalPaid: Number(p.totalPaid ?? 0),
+    balanceDue: Number(p.balanceDue ?? p.grandTotal),
     notes: p.notes != null ? String(p.notes) : null,
     createdAt: String(p.createdAt),
     updatedAt: String(p.updatedAt),
+    payments,
     lines,
   }
 }
@@ -168,6 +234,10 @@ export async function fetchPurchases(
   }
 }
 
+export async function fetchPurchaseKpis(): Promise<PurchaseKpis> {
+  return apiFetch<PurchaseKpis>('/api/v1/purchases/kpis')
+}
+
 export async function fetchPurchase(id: string): Promise<PurchaseDetail> {
   const data = await apiFetch<Record<string, unknown>>(`/api/v1/purchases/${id}`)
   return mapDetail(data)
@@ -186,14 +256,53 @@ export async function confirmPurchase(id: string): Promise<PurchaseDetail> {
   return mapDetail(data)
 }
 
-export async function receivePurchase(id: string): Promise<PurchaseDetail> {
-  const data = await apiFetch<Record<string, unknown>>(`/api/v1/purchases/${id}/receive`, { method: 'POST' })
+export async function receivePurchase(id: string, payload?: { items: { purchaseItemId: string; quantity: number; batchNumber?: string; expiryDate?: string }[]; notes?: string }): Promise<PurchaseDetail> {
+  const data = await apiFetch<Record<string, unknown>>(`/api/v1/purchases/${id}/receive`, { method: 'POST', body: payload ? JSON.stringify(payload) : undefined })
   return mapDetail(data)
+}
+
+export async function cancelPurchase(id: string, reason: string): Promise<PurchaseDetail> {
+  const data = await apiFetch<Record<string, unknown>>(`/api/v1/purchases/${id}/cancel`, {
+    method: 'POST',
+    body: JSON.stringify({ reason }),
+  })
+  return mapDetail(data)
+}
+
+export async function fetchPurchaseReturns(): Promise<PurchaseReturn[]> {
+  return apiFetch<PurchaseReturn[]>('/api/v1/purchases/returns')
+}
+
+export async function fetchPurchaseReceipts(id: string): Promise<PurchaseReceipt[]> {
+  return apiFetch<PurchaseReceipt[]>(`/api/v1/purchases/${id}/receipts`)
+}
+
+export async function createPurchaseReturn(id: string, payload: { reason: string; resolution: PurchaseReturn['resolution']; items: { purchaseItemId: string; quantity: number }[] }): Promise<PurchaseReturn> {
+  return apiFetch<PurchaseReturn>(`/api/v1/purchases/${id}/returns`, { method: 'POST', body: JSON.stringify(payload) })
 }
 
 export async function payPurchase(id: string): Promise<PurchaseDetail> {
   const data = await apiFetch<Record<string, unknown>>(`/api/v1/purchases/${id}/pay`, { method: 'POST' })
   return mapDetail(data)
+}
+
+export async function recordPurchasePayment(id: string, payload: { amount: number; method: PurchasePayment['method']; notes?: string }): Promise<PurchaseDetail> {
+  const data = await apiFetch<Record<string, unknown>>(`/api/v1/purchases/${id}/payments`, {
+    method: 'POST', body: JSON.stringify(payload),
+  })
+  return mapDetail(data)
+}
+
+export async function fetchSupplierOutstanding(supplierId: string): Promise<SupplierOutstanding> {
+  return apiFetch<SupplierOutstanding>(`/api/v1/purchases/supplier/${supplierId}/outstanding`)
+}
+
+export async function recordSupplierSettlement(supplierId: string, payload: { amount: number; method: PurchasePayment['method']; notes?: string; allocations: { purchaseId: string; amount: number }[] }): Promise<SupplierOutstanding> {
+  return apiFetch<SupplierOutstanding>(`/api/v1/purchases/supplier/${supplierId}/settlements`, { method: 'POST', body: JSON.stringify(payload) })
+}
+
+export async function fetchSupplierPaymentHistory(supplierId: string): Promise<SupplierPaymentHistory> {
+  return apiFetch<SupplierPaymentHistory>(`/api/v1/purchases/supplier/${supplierId}/payment-history`)
 }
 
 export async function deletePurchase(id: string): Promise<void> {
@@ -204,6 +313,7 @@ export function statusLabel(status: PurchaseStatus): string {
   switch (status) {
     case 'DRAFT': return 'Draft'
     case 'PENDING_GRN': return 'Pending GRN'
+    case 'CANCELLED': return 'Cancelled'
     case 'BILLED': return 'Billed'
     case 'PAID': return 'Paid'
   }
@@ -213,6 +323,7 @@ export function statusTone(status: PurchaseStatus): string {
   switch (status) {
     case 'DRAFT': return 'neutral'
     case 'PENDING_GRN': return 'warning'
+    case 'CANCELLED': return 'danger'
     case 'BILLED': return 'info'
     case 'PAID': return 'success'
   }
@@ -222,6 +333,7 @@ export function statusFilterKey(status: PurchaseStatus): string {
   switch (status) {
     case 'DRAFT': return 'draft'
     case 'PENDING_GRN': return 'pending'
+    case 'CANCELLED': return 'cancelled'
     case 'BILLED': return 'billed'
     case 'PAID': return 'paid'
   }
@@ -231,6 +343,7 @@ export const STATUS_FILTERS: { value: string; label: string; api: string }[] = [
   { value: 'all', label: 'All', api: 'all' },
   { value: 'draft', label: 'Draft', api: 'DRAFT' },
   { value: 'pending', label: 'Pending GRN', api: 'PENDING_GRN' },
+  { value: 'cancelled', label: 'Cancelled', api: 'CANCELLED' },
   { value: 'billed', label: 'Billed', api: 'BILLED' },
   { value: 'paid', label: 'Paid', api: 'PAID' },
 ]

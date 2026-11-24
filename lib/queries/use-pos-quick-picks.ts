@@ -5,17 +5,21 @@ import { fetchPosQuickPicks } from '@/lib/inventory-api'
 import { useAuth } from '@/lib/auth-context'
 import { queryKeys } from './keys'
 
-const POS_QUICK_PICKS_REFRESH_MS = 15_000
+// Product availability is checked again when a cashier adds an item to the
+// cart, so this short cache improves navigation without allowing overselling.
+const POS_QUICK_PICKS_STALE_MS = 30_000
+const POS_QUICK_PICKS_POLL_MS = 60_000
 
-export function usePosQuickPicksQuery() {
+export function usePosQuickPicksQuery(active = true) {
   const { user } = useAuth()
   return useQuery({
     queryKey: queryKeys.posQuickPicks(),
     queryFn: () => fetchPosQuickPicks(12),
-    enabled: Boolean(user),
-    staleTime: 0,
-    refetchInterval: POS_QUICK_PICKS_REFRESH_MS,
-    refetchOnWindowFocus: true,
+    enabled: Boolean(user) && active,
+    staleTime: POS_QUICK_PICKS_STALE_MS,
+    refetchOnWindowFocus: false,
+    refetchInterval: active ? POS_QUICK_PICKS_POLL_MS : false,
+    refetchIntervalInBackground: false,
   })
 }
 

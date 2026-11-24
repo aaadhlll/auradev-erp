@@ -6,6 +6,7 @@ import {
   fetchPrinterSettings,
   fetchBillingSettings,
   fetchTaxSettings,
+  fetchDatabaseBackupStatus,
   storeProfileToReceiptMeta,
   type PrinterSettings,
   type BillingSettings,
@@ -20,7 +21,7 @@ import {
   type ReceiptPrintOptions,
 } from '@/lib/receipt-export'
 
-export function useStoreProfileQuery() {
+export function useStoreProfileQuery(enabled = true) {
   const { user } = useAuth()
   return useQuery({
     queryKey: ['store-profile'],
@@ -29,44 +30,55 @@ export function useStoreProfileQuery() {
       setCurrency(profile.currency)
       return profile
     },
-    enabled: Boolean(user),
+    enabled: Boolean(user) && enabled,
     staleTime: 5 * 60_000,
   })
 }
 
-export function usePrinterSettingsQuery() {
+export function usePrinterSettingsQuery(enabled = true) {
   const { user } = useAuth()
   return useQuery({
     queryKey: ['printer-settings'],
     queryFn: fetchPrinterSettings,
-    enabled: Boolean(user),
+    enabled: Boolean(user) && enabled,
     staleTime: 5 * 60_000,
   })
 }
 
-export function useBillingSettingsQuery() {
+export function useBillingSettingsQuery(enabled = true) {
   const { user } = useAuth()
   return useQuery({
     queryKey: ['billing-settings'],
     queryFn: fetchBillingSettings,
-    enabled: Boolean(user),
+    enabled: Boolean(user) && enabled,
     staleTime: 5 * 60_000,
   })
 }
 
-export function useTaxSettingsQuery() {
+export function useTaxSettingsQuery(enabled = true) {
   const { user } = useAuth()
   return useQuery({
     queryKey: ['tax-settings'],
     queryFn: fetchTaxSettings,
-    enabled: Boolean(user),
+    enabled: Boolean(user) && enabled,
     staleTime: 60_000,
     refetchOnWindowFocus: true,
   })
 }
 
-export function useReceiptMeta(): ReceiptMeta {
-  const { data } = useStoreProfileQuery()
+export function useDatabaseBackupStatusQuery() {
+  const { user } = useAuth()
+  return useQuery({
+    queryKey: ['database-backups'],
+    queryFn: fetchDatabaseBackupStatus,
+    enabled: Boolean(user),
+    staleTime: 10_000,
+    refetchInterval: query => query.state.data?.history.some(item => item.status === 'QUEUED' || item.status === 'RUNNING') ? 5_000 : false,
+  })
+}
+
+export function useReceiptMeta(enabled = true): ReceiptMeta {
+  const { data } = useStoreProfileQuery(enabled)
   const fromStore = storeProfileToReceiptMeta(data)
   return {
     storeName: fromStore?.storeName ?? DEFAULT_RECEIPT_META.storeName,
@@ -78,9 +90,9 @@ export function useReceiptMeta(): ReceiptMeta {
   }
 }
 
-export function useReceiptPrintOptions(): ReceiptPrintOptions {
-  const printer = usePrinterSettingsQuery().data
-  const billing = useBillingSettingsQuery().data
+export function useReceiptPrintOptions(enabled = true): ReceiptPrintOptions {
+  const printer = usePrinterSettingsQuery(enabled).data
+  const billing = useBillingSettingsQuery(enabled).data
   return mergePrintOptions(printer, billing)
 }
 
@@ -92,10 +104,8 @@ export function mergePrintOptions(
   if (!billing) return base
   return {
     ...base,
-    showCashier: billing.showCashierOnReceipt,
     showTax: billing.taxEnabled,
-    showGstBreakup: billing.taxEnabled && billing.showGstBreakupOnReceipt,
-    showCustomer: billing.showCustomerOnReceipt,
+    showGstBreakup: billing.taxEnabled && base.showGstBreakup,
   }
 }
 
@@ -105,10 +115,18 @@ export function printerToPrintOptions(settings: PrinterSettings | null | undefin
     widthMm: settings.widthMm === 58 ? 58 : 80,
     showLogo: settings.showLogo,
     copies: settings.copies,
-    showCashier: DEFAULT_RECEIPT_PRINT.showCashier,
+    showCashier: settings.showCashier,
     showTax: DEFAULT_RECEIPT_PRINT.showTax,
-    showGstBreakup: DEFAULT_RECEIPT_PRINT.showGstBreakup,
-    showCustomer: DEFAULT_RECEIPT_PRINT.showCustomer,
+    showGstBreakup: settings.showTaxBreakup,
+    showCustomer: settings.showCustomer,
+    showStorePhone: settings.showStorePhone,
+    showStoreAddress: settings.showStoreAddress,
+    showStoreTin: settings.showStoreTin,
+    showBillDate: settings.showBillDate,
+    showPayment: settings.showPayment,
+    showTendered: settings.showTendered,
+    showChange: settings.showChange,
+    receiptTitle: settings.receiptTitle,
   }
 }
 
@@ -130,4 +148,9 @@ export function useInvalidateBillingSettings() {
 export function useInvalidateTaxSettings() {
   const qc = useQueryClient()
   return () => void qc.invalidateQueries({ queryKey: ['tax-settings'] })
+}
+
+export function useInvalidateDatabaseBackups() {
+  const qc = useQueryClient()
+  return () => void qc.invalidateQueries({ queryKey: ['database-backups'] })
 }

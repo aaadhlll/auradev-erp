@@ -1,16 +1,57 @@
 {
   "name": "auradev-erp",
-  "version": "0.1.0",
+  "version": "0.1.1",
+  "description": "Mercantile retail ERP desktop application",
+  "author": "AuraDev",
   "private": true,
+  "main": "desktop/main.cjs",
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "next build --webpack",
     "start": "next start",
     "lint": "eslint",
     "generate:import-sample": "node scripts/generate-import-sample.mjs",
     "generate:stock-sample": "node scripts/generate-stock-adjustment-sample.mjs",
     "test": "playwright test",
-    "test:ui": "playwright test --ui"
+    "test:ui": "playwright test --ui",
+    "desktop:dev": "electron .",
+    "desktop:backend": "node scripts/build-desktop-backend.mjs",
+    "desktop:prepare": "npm run desktop:backend && npm run build && node scripts/prepare-electron.mjs",
+    "desktop:dist": "npm run desktop:prepare && electron-builder --win nsis"
+  },
+  "build": {
+    "appId": "in.auradev.mercantile",
+    "productName": "Mercantile",
+    "directories": {
+      "output": "release"
+    },
+    "afterPack": "scripts/after-pack.cjs",
+    "files": [
+      "desktop/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": ".next/standalone",
+        "to": "next"
+      },
+      {
+        "from": "desktop/runtime",
+        "to": "runtime"
+      }
+    ],
+    "win": {
+      "icon": "desktop/icon.png",
+      "target": [
+        "nsis"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    }
   },
   "dependencies": {
     "@swc/helpers": "0.5.15",
@@ -27,6 +68,8 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "electron": "^45.3.1",
+    "electron-builder": "^26.18.0",
     "eslint": "^9",
     "eslint-config-next": "16.2.7",
     "tailwindcss": "^4",

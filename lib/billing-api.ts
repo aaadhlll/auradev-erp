@@ -4,6 +4,7 @@ export interface ApiCustomer {
   id: string
   name: string
   phone: string | null
+  address: string | null
   type: 'walkin' | 'b2c' | 'b2b'
   loyaltyPoints: number
   creditBalance: number
@@ -75,6 +76,7 @@ export interface SavedBill {
   billNo: string
   customerId: string
   customerName: string
+  customerAddress: string | null
   cashierName: string
   status: 'COMPLETED' | 'HELD' | 'VOID'
   discountMode: 'AMOUNT' | 'PERCENT'
@@ -88,10 +90,18 @@ export interface SavedBill {
   paymentMethod: string
   tendered: number | null
   changeDue: number | null
+  payments: BillPayment[]
   createdAt: string
   updatedAt: string
   gstSlabs: GstSlab[]
   lines: BillLine[]
+}
+
+export interface BillPayment {
+  method: string
+  amount: number
+  tendered: number | null
+  changeDue: number | null
 }
 
 export type GstScheme = 'PRODUCT' | 'COMPOSITE' | 'CATEGORY'
@@ -142,11 +152,18 @@ function mapBill(b: Record<string, unknown>): SavedBill {
     taxableValue: Number(s.taxableValue),
     taxAmount: Number(s.taxAmount),
   }))
+  const payments = ((b.payments as Record<string, unknown>[]) ?? []).map(p => ({
+    method: String(p.method ?? ''),
+    amount: Number(p.amount ?? 0),
+    tendered: p.tendered != null ? Number(p.tendered) : null,
+    changeDue: p.changeDue != null ? Number(p.changeDue) : null,
+  }))
   return {
     id: String(b.id),
     billNo: String(b.billNo),
     customerId: String(b.customerId),
     customerName: String(b.customerName),
+    customerAddress: b.customerAddress != null ? String(b.customerAddress) : null,
     cashierName: String(b.cashierName),
     status: String(b.status ?? 'COMPLETED') as SavedBill['status'],
     discountMode: String(b.discountMode ?? 'AMOUNT') as SavedBill['discountMode'],
@@ -160,6 +177,7 @@ function mapBill(b: Record<string, unknown>): SavedBill {
     paymentMethod: String(b.paymentMethod ?? ''),
     tendered: b.tendered != null ? Number(b.tendered) : null,
     changeDue: b.changeDue != null ? Number(b.changeDue) : null,
+    payments,
     createdAt: String(b.createdAt),
     updatedAt: String(b.updatedAt ?? b.createdAt),
     gstSlabs,
@@ -288,6 +306,7 @@ export interface CreateCustomerPayload {
   phone?: string
   type?: 'b2c' | 'b2b'
   gstin?: string
+  address?: string
 }
 
 export async function createCustomer(payload: CreateCustomerPayload): Promise<ApiCustomer> {
@@ -316,9 +335,12 @@ export async function settleCustomerCredit(customerId: string, payload: {
   })
 }
 
-export async function fetchBills(q = '', page = 0, size = 25): Promise<PagedBills> {
+export async function fetchBills(q = '', page = 0, size = 25, customerId = '', dateFrom = '', dateTo = ''): Promise<PagedBills> {
   const params = new URLSearchParams({ page: String(page), size: String(size) })
   if (q.trim()) params.set('q', q.trim())
+  if (customerId) params.set('customerId', customerId)
+  if (dateFrom) params.set('dateFrom', dateFrom)
+  if (dateTo) params.set('dateTo', dateTo)
   const raw = await apiFetch<Record<string, unknown>>(`/api/v1/bills?${params}`)
   const items = (raw.content as Record<string, unknown>[] ?? []).map(mapBillSummary)
   return {
